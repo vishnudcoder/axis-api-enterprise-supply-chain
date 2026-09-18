@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: axis_api
+      POSTGRES_USER: axis
+      POSTGRES_PASSWORD: axis_dev_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - axis_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U axis -d axis_api"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  axis_pgdata:
