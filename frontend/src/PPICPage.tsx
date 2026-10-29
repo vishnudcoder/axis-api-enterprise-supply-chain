@@ -49,6 +49,15 @@ const emptyForm = {
 export default function PPICPage() {
   const { user } = useAuth();
   const isAdmin = user?.role?.name === "Plant Head / Admin";
+  const canPurchaseOrders =
+    isAdmin ||
+    Boolean(
+      user?.role?.permissions?.some(
+        (permission: any) =>
+          String(permission.page || "").toLowerCase() === "purchase orders" &&
+          Boolean(permission.can_view),
+      ),
+    );
 
   const [plans, setPlans] = useState<Plan[]>([]);
   const [summary, setSummary] = useState<any>({});
@@ -73,15 +82,22 @@ export default function PPICPage() {
       params.set("page", "1");
       params.set("page_size", "100");
 
-      const [plansResponse, summaryResponse, poResponse] = await Promise.all([
+      const [plansResponse, summaryResponse] = await Promise.all([
         api.get(`/api/ppic?${params.toString()}`),
         api.get("/api/ppic/summary"),
-        api.get("/api/purchase-orders?page=1&page_size=100"),
       ]);
 
       setPlans(plansResponse.data?.items || plansResponse.data || []);
       setSummary(summaryResponse.data || {});
-      setPurchaseOrders(poResponse.data?.items || poResponse.data || []);
+
+      if (canPurchaseOrders) {
+        const poResponse = await api.get(
+          "/api/purchase-orders?page=1&page_size=100",
+        );
+        setPurchaseOrders(poResponse.data?.items || poResponse.data || []);
+      } else {
+        setPurchaseOrders([]);
+      }
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || "Unable to load PPIC data.");
     } finally {
@@ -92,7 +108,7 @@ export default function PPICPage() {
   useEffect(() => {
     const timer = setTimeout(load, 250);
     return () => clearTimeout(timer);
-  }, [search, planningStatus, productionStatus]);
+  }, [search, planningStatus, productionStatus, user]);
 
   function openAdd() {
     setSelected(null);
@@ -256,7 +272,7 @@ export default function PPICPage() {
             <div className="ppic-modal-head"><div><h2>{modal==="add"?"Create Production Plan":"Edit Production Plan"}</h2><div className="ppic-muted">Connect a confirmed PO to plant planning.</div></div><button type="button" className="ppic-close" onClick={()=>setModal(null)}><X size={17}/></button></div>
             <div className="ppic-form">
               <label>Plan Number<input required value={form.plan_number} onChange={e=>setForm({...form,plan_number:e.target.value})} placeholder="PP-2026-001"/></label>
-              <label>Purchase Order<select value={form.po_id} onChange={e=>{const po=purchaseOrders.find(x=>String(x.id)===e.target.value);po?choosePO(po):setForm({...form,po_id:""})}}><option value="">Select PO</option>{purchaseOrders.map(po=><option key={po.id} value={po.id}>{po.po_number} — {po.customer}</option>)}</select></label>
+              <label>Purchase Order<select disabled={!canPurchaseOrders} value={form.po_id} onChange={e=>{const po=purchaseOrders.find(x=>String(x.id)===e.target.value);po?choosePO(po):setForm({...form,po_id:""})}}><option value="">{canPurchaseOrders ? "Select PO" : "Purchase Orders unavailable for this role"}</option>{purchaseOrders.map(po=><option key={po.id} value={po.id}>{po.po_number} — {po.customer}</option>)}</select></label>
               <label>PO Number<input required value={form.po_number} onChange={e=>setForm({...form,po_number:e.target.value})}/></label>
               <label>Customer<input required value={form.customer} onChange={e=>setForm({...form,customer:e.target.value})}/></label>
               <label>Product<input required value={form.product} onChange={e=>setForm({...form,product:e.target.value})}/></label>

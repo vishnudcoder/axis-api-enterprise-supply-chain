@@ -869,3 +869,78 @@ class ProductionBatch(Base):
         default=utcnow,
         onupdate=utcnow,
     )
+
+
+class Customer(Base):
+    __tablename__ = "customers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    customer_code: Mapped[str] = mapped_column(
+        String(50),
+        unique=True,
+        index=True,
+    )
+
+    customer_name: Mapped[str] = mapped_column(
+        String(180),
+        index=True,
+    )
+
+    contact_person: Mapped[str | None] = mapped_column(
+        String(120),
+        nullable=True,
+    )
+
+    email: Mapped[str | None] = mapped_column(
+        String(180),
+        nullable=True,
+    )
+
+    phone: Mapped[str | None] = mapped_column(
+        String(40),
+        nullable=True,
+    )
+
+    country: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    city: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    address: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    customer_type: Mapped[str] = mapped_column(
+        String(80),
+        default="Pharmaceutical",
+        index=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(30),
+        default="Active",
+        index=True,
+    )
+
+    notes: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+    )

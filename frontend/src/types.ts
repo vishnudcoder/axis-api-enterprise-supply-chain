@@ -1,4 +1,4 @@
-export type Action = "view" | "create" | "edit" | "delete" | "approve";
+﻿export type Action = "view" | "create" | "edit" | "delete" | "approve";
 
 export type Permission = {
   page: string;
@@ -10,14 +10,14 @@ export type Permission = {
 };
 
 export type Role = {
-  id: number;
+  id: number | string;
   name: string;
   description: string;
   permissions: Permission[];
 };
 
 export type User = {
-  id: number;
+  id: number | string;
   email: string;
   full_name: string;
   employee_id: string | null;

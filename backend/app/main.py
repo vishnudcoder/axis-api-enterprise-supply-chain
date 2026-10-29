@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+﻿from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 from .config import CORS_ORIGINS
 from .database import Base, engine, get_db
 from .dependencies import get_current_user, require_admin
+from .supabase_dependencies import require_supabase_admin
 from .models import AuditLog, Lead, Permission, Role, User ,PurchaseOrder
 from .schemas import CreateUserRequest, LoginRequest, LoginResponse, UserOut
 from .security import create_access_token, hash_password, verify_password
@@ -19,10 +20,14 @@ from .supply_chain import router as supply_chain_router
 from .leads import router as leads_router
 from .coa import router as coa_router
 from .samples import router as samples_router
+from .sample_management import router as sample_management_router
 from .quotes import router as quotes_router
 from .production import router as production_router
 from .user_management import router as user_management_router
 from .order_management import router as order_management_router
+from .customers import router as customers_router
+from .commercial_customers import router as commercial_customers_router
+from .supabase_routes import router as supabase_auth_router
 
 from datetime import datetime
 from typing import Optional
@@ -34,6 +39,7 @@ from sqlalchemy.orm import Session
 
 from .database import get_db
 from .dependencies import require_permission
+from .supabase_dependencies import require_supabase_admin
 from .models import AuditLog, Sample
 from .schemas import (
     CreateSampleRequest,
@@ -551,12 +557,12 @@ def delete_sample(
         "message": "Sample deleted successfully"
     }
 
-Base.metadata.create_all(bind=engine)
+# Database schema is managed through Alembic migrations.
 
 app = FastAPI(
     title="AXIS API",
     version="1.0.0",
-    description="AXIS API — Lead → PO → Plant",
+    description="AXIS API â€” Lead â†’ PO â†’ Plant",
 )
 
 app.add_middleware(
@@ -575,10 +581,15 @@ app.include_router(stock_router)
 app.include_router(supply_chain_router)
 app.include_router(coa_router)
 app.include_router(samples_router)
+app.include_router(sample_management_router)
 app.include_router(quotes_router)
 app.include_router(production_router)
 app.include_router(user_management_router)
 app.include_router(order_management_router)
+app.include_router(customers_router)
+app.include_router(commercial_customers_router)
+app.include_router(supabase_auth_router)
+
 def role_response(role: Role):
     return {
         "id": role.id,
@@ -655,7 +666,7 @@ def me(user=Depends(get_current_user)):
     return user_response(user)
 
 @app.get("/api/roles")
-def list_roles(db: Session = Depends(get_db), _=Depends(require_admin)):
+def list_roles(db: Session = Depends(get_db), _=Depends(require_supabase_admin)):
     return [
         {
             "id": role.id,
@@ -666,7 +677,7 @@ def list_roles(db: Session = Depends(get_db), _=Depends(require_admin)):
     ]
 
 @app.get("/api/users", response_model=list[UserOut])
-def list_users(db: Session = Depends(get_db), _=Depends(require_admin)):
+def list_users(db: Session = Depends(get_db), _=Depends(require_supabase_admin)):
     users = (
         db.query(User)
         .options(joinedload(User.role).joinedload(Role.permissions))

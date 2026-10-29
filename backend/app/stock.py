@@ -1,11 +1,12 @@
-from datetime import datetime, timezone
+﻿from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .database import get_db
-from .dependencies import get_current_user, require_permission
+from .supabase_authorization import require_axis_permission
+from .supabase_dependencies import get_supabase_current_identity
 from .models import AuditLog, StockItem
 from .schemas import (
     CreateStockItemRequest,
@@ -16,7 +17,7 @@ from .schemas import (
 
 router = APIRouter(
     prefix="/api/stock",
-    tags=["Stock Management"],
+    tags=["INVENTORY_LOT"],
 )
 
 
@@ -79,9 +80,9 @@ def create_audit(
     response_model=dict,
     dependencies=[
         Depends(
-            require_permission(
-                "Stock Management",
-                "can_view",
+            require_axis_permission(
+                "INVENTORY_LOT",
+                "VIEW",
             )
         )
     ],
@@ -157,9 +158,9 @@ def list_stock(
     response_model=dict,
     dependencies=[
         Depends(
-            require_permission(
-                "Stock Management",
-                "can_view",
+            require_axis_permission(
+                "INVENTORY_LOT",
+                "VIEW",
             )
         )
     ],
@@ -218,9 +219,9 @@ def stock_summary(
     response_model=StockItemOut,
     dependencies=[
         Depends(
-            require_permission(
-                "Stock Management",
-                "can_view",
+            require_axis_permission(
+                "INVENTORY_LOT",
+                "VIEW",
             )
         )
     ],
@@ -246,9 +247,9 @@ def get_stock(
     status_code=201,
     dependencies=[
         Depends(
-            require_permission(
-                "Stock Management",
-                "can_create",
+            require_axis_permission(
+                "INVENTORY_LOT",
+                "CREATE",
             )
         )
     ],
@@ -256,7 +257,7 @@ def get_stock(
 def create_stock(
     payload: CreateStockItemRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_supabase_current_identity),
 ):
     existing = (
         db.query(StockItem)
@@ -299,9 +300,9 @@ def create_stock(
     response_model=StockItemOut,
     dependencies=[
         Depends(
-            require_permission(
-                "Stock Management",
-                "can_edit",
+            require_axis_permission(
+                "INVENTORY_LOT",
+                "UPDATE",
             )
         )
     ],
@@ -310,7 +311,7 @@ def update_stock(
     stock_id: int,
     payload: UpdateStockItemRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_supabase_current_identity),
 ):
     item = db.get(StockItem, stock_id)
 
@@ -365,9 +366,9 @@ def update_stock(
     response_model=StockItemOut,
     dependencies=[
         Depends(
-            require_permission(
-                "Stock Management",
-                "can_edit",
+            require_axis_permission(
+                "INVENTORY_LOT",
+                "UPDATE",
             )
         )
     ],
@@ -376,7 +377,7 @@ def update_stock_status(
     stock_id: int,
     payload: dict,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_supabase_current_identity),
 ):
     item = db.get(StockItem, stock_id)
 
@@ -416,9 +417,9 @@ def update_stock_status(
     status_code=204,
     dependencies=[
         Depends(
-            require_permission(
-                "Stock Management",
-                "can_delete",
+            require_axis_permission(
+                "INVENTORY_LOT",
+                "DELETE",
             )
         )
     ],
@@ -426,7 +427,7 @@ def update_stock_status(
 def delete_stock(
     stock_id: int,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_supabase_current_identity),
 ):
     item = db.get(StockItem, stock_id)
 

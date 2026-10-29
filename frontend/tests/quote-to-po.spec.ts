@@ -40,7 +40,7 @@ test("Automated Quote to Purchase Order conversion", async ({ request }) => {
         unit_price_usd: 120,
         total_value_usd: 30000,
         currency: "USD",
-        payment_terms: "30% advance",
+        payment_terms: "ADVANCE",
         delivery_terms: "CIF",
         validity_days: 30,
         status: "Draft",

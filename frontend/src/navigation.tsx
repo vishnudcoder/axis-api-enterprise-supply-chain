@@ -28,7 +28,7 @@ export type NavItem = {
 export const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", path: "/", page: "Dashboard", group: "OVERVIEW", icon: LayoutDashboard },
   { label: "MD Commercial View", path: "/md-commercial", page: "MD Commercial View", group: "OVERVIEW", icon: BriefcaseBusiness },
-
+  { label: "Customers", path: "/customers", page: "Customers", group: "COMMERCIAL", icon: Users },
   { label: "Leads", path: "/leads", page: "Leads", group: "COMMERCIAL", icon: Users },
   { label: "COA", path: "/coa", page: "COA", group: "COMMERCIAL", icon: FileCheck2 },
   { label: "Samples", path: "/samples", page: "Samples", group: "COMMERCIAL", icon: PackageSearch },

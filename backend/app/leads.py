@@ -4,8 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .database import get_db
-from .dependencies import require_permission
-from .models import AuditLog, Lead
+from .supabase_authorization import require_axis_permission
+from .supabase_dependencies import get_supabase_current_identity
+from .business_audit import write_business_audit
+from .models import Lead
 from .schemas import CreateLeadRequest, UpdateLeadRequest
 
 
@@ -82,7 +84,7 @@ def lead_response(lead: Lead) -> dict:
 )
 def leads_summary(
     db: Session = Depends(get_db),
-    user=Depends(require_permission("leads", "can_view")),
+    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "VIEW")),
 ):
     """
     Return live Leads statistics for the dashboard.
@@ -236,12 +238,7 @@ def list_leads(
         description="Number of records per page",
     ),
     db: Session = Depends(get_db),
-    user=Depends(
-        require_permission(
-            "leads",
-            "can_view",
-        )
-    ),
+    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "VIEW")),
 ):
     """
     Return Leads with optional search, stage and market filters.
@@ -335,12 +332,7 @@ def list_leads(
 def get_lead(
     lead_id: int,
     db: Session = Depends(get_db),
-    user=Depends(
-        require_permission(
-            "leads",
-            "can_view",
-        )
-    ),
+    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "VIEW")),
 ):
     """
     Return one Lead by database ID.
@@ -375,12 +367,7 @@ def get_lead(
 def create_lead(
     payload: CreateLeadRequest,
     db: Session = Depends(get_db),
-    user=Depends(
-        require_permission(
-            "leads",
-            "can_create",
-        )
-    ),
+    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "CREATE")),
 ):
     """
     Create a new customer enquiry.
@@ -462,15 +449,20 @@ def create_lead(
     # AUDIT LOG
     # --------------------------------------------------------
 
-    audit = AuditLog(
-        user_id=user.id,
-        role=user.role.name,
-        action="CREATE",
-        entity="lead",
-        entity_id=str(lead.id),
+    write_business_audit(
+        db,
+        actor_user_id=identity["user_id"],
+        action_code="INSERT",
+        record_schema="public",
+        record_table="leads",
+        record_key={"id": lead.id},
+        after_state=lead_response(lead),
+        changed_fields=[
+            "enquiry_id", "customer", "product", "cas_no", "market",
+            "regulatory_path", "tech_pack", "quantity_kg", "value_usd",
+            "stage", "owner", "next_step", "development",
+        ],
     )
-
-    db.add(audit)
 
     # --------------------------------------------------------
     # COMMIT
@@ -495,12 +487,7 @@ def update_lead(
     lead_id: int,
     payload: UpdateLeadRequest,
     db: Session = Depends(get_db),
-    user=Depends(
-        require_permission(
-            "leads",
-            "can_edit",
-        )
-    ),
+    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "UPDATE")),
 ):
     """
     Update an existing Lead.
@@ -586,15 +573,16 @@ def update_lead(
     # AUDIT LOG
     # --------------------------------------------------------
 
-    audit = AuditLog(
-        user_id=user.id,
-        role=user.role.name,
-        action="UPDATE",
-        entity="lead",
-        entity_id=str(lead.id),
+    write_business_audit(
+        db,
+        actor_user_id=identity["user_id"],
+        action_code="UPDATE",
+        record_schema="public",
+        record_table="leads",
+        record_key={"id": lead.id},
+        after_state=lead_response(lead),
+        changed_fields=list(data.keys()),
     )
-
-    db.add(audit)
 
     # --------------------------------------------------------
     # COMMIT
@@ -622,12 +610,7 @@ def change_lead_stage(
         description="New commercial stage",
     ),
     db: Session = Depends(get_db),
-    user=Depends(
-        require_permission(
-            "leads",
-            "can_edit",
-        )
-    ),
+    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "UPDATE")),
 ):
     """
     Change only the commercial stage of a Lead.
@@ -686,15 +669,17 @@ def change_lead_stage(
     # AUDIT LOG
     # --------------------------------------------------------
 
-    audit = AuditLog(
-        user_id=user.id,
-        role=user.role.name,
-        action="STAGE_CHANGE",
-        entity="lead",
-        entity_id=str(lead.id),
+    write_business_audit(
+        db,
+        actor_user_id=identity["user_id"],
+        action_code="UPDATE",
+        record_schema="public",
+        record_table="leads",
+        record_key={"id": lead.id},
+        before_state={"stage": old_stage},
+        after_state={"stage": lead.stage},
+        changed_fields=["stage"],
     )
-
-    db.add(audit)
 
     # --------------------------------------------------------
     # COMMIT
@@ -722,12 +707,7 @@ def change_lead_stage(
 def delete_lead(
     lead_id: int,
     db: Session = Depends(get_db),
-    user=Depends(
-        require_permission(
-            "leads",
-            "can_delete",
-        )
-    ),
+    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "DELETE")),
 ):
     """
     Delete a Lead.
@@ -762,15 +742,15 @@ def delete_lead(
         lead.id
     )
 
-    audit = AuditLog(
-        user_id=user.id,
-        role=user.role.name,
-        action="DELETE",
-        entity="lead",
-        entity_id=lead_id_string,
+    write_business_audit(
+        db,
+        actor_user_id=identity["user_id"],
+        action_code="DELETE",
+        record_schema="public",
+        record_table="leads",
+        record_key={"id": lead_id_string},
+        before_state=lead_response(lead),
     )
-
-    db.add(audit)
 
     # --------------------------------------------------------
     # DELETE

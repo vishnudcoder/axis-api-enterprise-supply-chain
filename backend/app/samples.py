@@ -1,13 +1,14 @@
-from datetime import datetime
+﻿from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from .business_audit import write_business_audit
 from .database import get_db
-from .dependencies import require_permission
-from .models import AuditLog, Sample
+from .supabase_authorization import require_axis_permission
+from .models import Sample
 from .schemas import (
     CreateSampleRequest,
     UpdateSampleRequest,
@@ -40,20 +41,25 @@ PRIORITY_VALUES = [
 
 def create_audit(
     db: Session,
-    user,
+    identity: dict,
     action: str,
-    entity_type: str,
-    entity_id: int | None = None,
+    item: Sample,
+    before_state: dict | None = None,
+    changed_fields: list[str] | None = None,
 ):
-    audit = AuditLog(
-        user_id=user.id,
-        role=user.role.name if user.role else None,
-        action=action,
-        entity=entity_type,
-        entity_id=entity_id,
+    write_business_audit(
+        db,
+        actor_user_id=identity["user_id"],
+        action_code=action,
+        record_schema="public",
+        record_table="samples",
+        record_key={"id": item.id},
+        before_state=before_state,
+        after_state=(
+            None if action == "DELETE" else sample_response(item)
+        ),
+        changed_fields=changed_fields,
     )
-
-    db.add(audit)
 
 
 def sample_response(item: Sample) -> dict:
@@ -96,7 +102,7 @@ def list_samples(
     page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Samples", "can_view")
+        require_axis_permission("QUALITY_SAMPLES", "VIEW")
     ),
 ):
     query = db.query(Sample)
@@ -157,7 +163,7 @@ def list_samples(
 def samples_summary(
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Samples", "can_view")
+        require_axis_permission("QUALITY_SAMPLES", "VIEW")
     ),
 ):
     total = (
@@ -259,7 +265,7 @@ def get_sample(
     sample_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Samples", "can_view")
+        require_axis_permission("QUALITY_SAMPLES", "VIEW")
     ),
 ):
     item = (
@@ -286,7 +292,7 @@ def create_sample(
     payload: CreateSampleRequest,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Samples", "can_create")
+        require_axis_permission("QUALITY_SAMPLES", "CREATE")
     ),
 ):
     if payload.status not in STATUS_VALUES:
@@ -346,9 +352,9 @@ def create_sample(
     create_audit(
         db,
         current_user,
-        "CREATE",
-        "Samples",
-        item.id,
+        "INSERT",
+        item,
+        changed_fields=list(payload.model_dump().keys()),
     )
 
     db.commit()
@@ -366,7 +372,7 @@ def update_sample(
     payload: UpdateSampleRequest,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Samples", "can_edit")
+        require_axis_permission("QUALITY_SAMPLES", "UPDATE")
     ),
 ):
     item = (
@@ -420,15 +426,20 @@ def update_sample(
                 detail="Sample number already exists",
             )
 
+    before_state = sample_response(item)
+
     for key, value in data.items():
         setattr(item, key, value)
+
+    item.updated_at = datetime.now().astimezone()
 
     create_audit(
         db,
         current_user,
         "UPDATE",
-        "Samples",
-        item.id,
+        item,
+        before_state=before_state,
+        changed_fields=list(data.keys()),
     )
 
     db.commit()
@@ -446,7 +457,7 @@ def update_sample_status(
     status: str,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Samples", "can_edit")
+        require_axis_permission("QUALITY_SAMPLES", "UPDATE")
     ),
 ):
     item = (
@@ -467,20 +478,26 @@ def update_sample_status(
             detail="Invalid sample status",
         )
 
+    before_state = sample_response(item)
     item.status = status
+    item.updated_at = datetime.now().astimezone()
+    changed_fields = ["status"]
 
     if status == "Dispatched" and not item.dispatch_date:
         item.dispatch_date = datetime.now().astimezone()
+        changed_fields.append("dispatch_date")
 
     if status == "Received" and not item.received_date:
         item.received_date = datetime.now().astimezone()
+        changed_fields.append("received_date")
 
     create_audit(
         db,
         current_user,
-        "STATUS_UPDATE",
-        "Samples",
-        item.id,
+        "UPDATE",
+        item,
+        before_state=before_state,
+        changed_fields=changed_fields,
     )
 
     db.commit()
@@ -494,7 +511,7 @@ def delete_sample(
     sample_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Samples", "can_delete")
+        require_axis_permission("QUALITY_SAMPLES", "DELETE")
     ),
 ):
     item = (
@@ -509,12 +526,15 @@ def delete_sample(
             detail="Sample not found",
         )
 
+    before_state = sample_response(item)
+
     create_audit(
         db,
         current_user,
         "DELETE",
-        "Samples",
-        item.id,
+        item,
+        before_state=before_state,
+        changed_fields=list(before_state.keys()),
     )
 
     db.delete(item)

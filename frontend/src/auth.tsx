@@ -1,4 +1,4 @@
-import {
+﻿import {
   createContext,
   useContext,
   useEffect,
@@ -37,7 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     api
-      .get("/api/auth/me")
+      .get("/api/auth/supabase-me")
       .then((response) => {
         setUser(response.data);
         localStorage.setItem("axis_user", JSON.stringify(response.data));
@@ -73,14 +73,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   function can(page: string, action: Action = "view") {
     if (!user) return false;
 
+    const requestedPage = normalizePage(page);
+
+    /*
+     * Customers is a special restricted module.
+     *
+     * Only these two roles can access Customers:
+     * - Managing Director
+     * - Sales & Marketing
+     *
+     * This check MUST happen before the Plant Head / Admin
+     * global-access rule.
+     */
+    if (
+      requestedPage === "customers" &&
+      user.role.name !== "Managing Director" &&
+      user.role.name !== "Sales & Marketing"
+    ) {
+      return false;
+    }
+
+    /*
+     * Plant Head / Admin has global access to all other modules.
+     */
     if (user.role.name === "Plant Head / Admin") {
       return true;
     }
 
-    const requestedPage = normalizePage(page);
-
-    // Stores & Supply Chain must not see Purchase Orders
-    // in the frontend navigation.
+    /*
+     * Stores & Supply Chain must not see Purchase Orders
+     * in the frontend navigation.
+     */
     if (
       user.role.name === "Stores & Supply Chain" &&
       requestedPage === "purchase orders"
@@ -95,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!permission) return false;
 
     const key = `can_${action}` as keyof typeof permission;
+
     return Boolean(permission[key]);
   }
 
@@ -103,11 +127,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!user) return;
 
     const permission = user.role.permissions;
+
     const roles = [...new Set(permission.map((item) => item.page))];
 
-    // The actual production JWT role is never changed here.
-    // This function only exists for UI rehearsal and is intentionally
-    // limited to changing the displayed permission profile.
+    /*
+     * Demo profiles are only for UI rehearsal.
+     * The actual production JWT role is never changed here.
+     */
     const demoProfiles: Record<string, string[]> = {
       "Plant Head / Admin": [
         "Dashboard",
@@ -126,8 +152,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         "Supply Chain",
       ],
 
-      "Managing Director": roles,
+      /*
+       * Managing Director can access Customers.
+       */
+      "Managing Director": [
+        ...roles,
+        "Customers",
+      ],
 
+      /*
+       * Sales & Marketing can access Customers.
+       */
       "Sales & Marketing": [
         "Dashboard",
         "Leads",
@@ -136,6 +171,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         "Quotes",
         "Purchase Orders",
         "Order Management",
+        "Customers",
       ],
 
       "QC / QA": [
@@ -183,19 +219,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       description: roleName,
       permissions: next.role.permissions.map((p) => ({
         ...p,
+
         can_view: allowed.has(normalizePage(p.page)),
+
         can_create:
           roleName === "Plant Head / Admin"
             ? true
             : p.can_create && allowed.has(normalizePage(p.page)),
+
         can_edit:
           roleName === "Plant Head / Admin"
             ? true
             : p.can_edit && allowed.has(normalizePage(p.page)),
+
         can_delete:
           roleName === "Plant Head / Admin"
             ? true
             : p.can_delete && allowed.has(normalizePage(p.page)),
+
         can_approve:
           roleName === "Plant Head / Admin"
             ? true
@@ -207,11 +248,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const value = useMemo(
-    () => ({ user, loading, login, logout, can, switchDemoRole }),
+    () => ({
+      user,
+      loading,
+      login,
+      logout,
+      can,
+      switchDemoRole,
+    }),
     [user, loading],
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {
@@ -223,3 +275,4 @@ export function useAuth() {
 
   return context;
 }
+

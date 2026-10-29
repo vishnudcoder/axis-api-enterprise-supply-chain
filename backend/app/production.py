@@ -1,11 +1,11 @@
-from datetime import datetime, timezone
+﻿from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .database import get_db
-from .dependencies import require_permission
+from .supabase_authorization import require_axis_permission
 from .models import ProductionBatch
 from .schemas import (
     CreateProductionBatchRequest,
@@ -56,7 +56,7 @@ def batch_response(batch: ProductionBatch) -> ProductionBatchOut:
 @router.get(
     "",
     response_model=dict,
-    dependencies=[Depends(require_permission("Production", "can_view"))],
+    dependencies=[Depends(require_axis_permission("PRODUCTION_BATCH", "VIEW"))],
 )
 def list_production_batches(
     search: str | None = None,
@@ -115,7 +115,7 @@ def list_production_batches(
 @router.get(
     "/summary",
     response_model=dict,
-    dependencies=[Depends(require_permission("Production", "can_view"))],
+    dependencies=[Depends(require_axis_permission("PRODUCTION_BATCH", "VIEW"))],
 )
 def production_summary(
     db: Session = Depends(get_db),
@@ -153,7 +153,7 @@ def production_summary(
 @router.get(
     "/{batch_id}",
     response_model=ProductionBatchOut,
-    dependencies=[Depends(require_permission("Production", "can_view"))],
+    dependencies=[Depends(require_axis_permission("PRODUCTION_BATCH", "VIEW"))],
 )
 def get_production_batch(
     batch_id: int,
@@ -173,7 +173,7 @@ def get_production_batch(
 @router.post(
     "",
     response_model=ProductionBatchOut,
-    dependencies=[Depends(require_permission("Production", "can_create"))],
+    dependencies=[Depends(require_axis_permission("PRODUCTION_BATCH", "CREATE"))],
 )
 def create_production_batch(
     payload: CreateProductionBatchRequest,
@@ -206,7 +206,7 @@ def create_production_batch(
 @router.put(
     "/{batch_id}",
     response_model=ProductionBatchOut,
-    dependencies=[Depends(require_permission("Production", "can_edit"))],
+    dependencies=[Depends(require_axis_permission("PRODUCTION_BATCH", "UPDATE"))],
 )
 def update_production_batch(
     batch_id: int,
@@ -250,7 +250,7 @@ def update_production_batch(
 @router.patch(
     "/{batch_id}/status",
     response_model=ProductionBatchOut,
-    dependencies=[Depends(require_permission("Production", "can_edit"))],
+    dependencies=[Depends(require_axis_permission("PRODUCTION_BATCH", "UPDATE"))],
 )
 def change_production_status(
     batch_id: int,
@@ -287,7 +287,7 @@ def change_production_status(
 
 @router.delete(
     "/{batch_id}",
-    dependencies=[Depends(require_permission("Production", "can_delete"))],
+    dependencies=[Depends(require_axis_permission("PRODUCTION_BATCH", "DELETE"))],
 )
 def delete_production_batch(
     batch_id: int,

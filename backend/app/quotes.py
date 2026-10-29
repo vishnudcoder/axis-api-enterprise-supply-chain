@@ -1,11 +1,12 @@
-from datetime import datetime, timezone, timedelta
+﻿from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .database import get_db
-from .dependencies import get_current_user, require_permission
+from .supabase_authorization import require_axis_permission
+from .supabase_dependencies import get_supabase_current_identity
 from .models import AuditLog, Quote, PurchaseOrder
 from .schemas import (
     CreateQuoteRequest,
@@ -78,7 +79,7 @@ def quote_response(quote: Quote):
 @router.get(
     "",
     response_model=dict,
-    dependencies=[Depends(require_permission("Quotes", "can_view"))],
+    dependencies=[Depends(require_axis_permission("COMMERCIAL_QUOTE", "VIEW"))],
 )
 def list_quotes(
     search: str | None = Query(default=None),
@@ -124,7 +125,7 @@ def list_quotes(
 @router.get(
     "/summary",
     response_model=dict,
-    dependencies=[Depends(require_permission("Quotes", "can_view"))],
+    dependencies=[Depends(require_axis_permission("COMMERCIAL_QUOTE", "VIEW"))],
 )
 def quote_summary(
     db: Session = Depends(get_db),
@@ -182,7 +183,7 @@ def quote_summary(
 @router.get(
     "/{quote_id}",
     response_model=QuoteOut,
-    dependencies=[Depends(require_permission("Quotes", "can_view"))],
+    dependencies=[Depends(require_axis_permission("COMMERCIAL_QUOTE", "VIEW"))],
 )
 def get_quote(
     quote_id: int,
@@ -204,12 +205,12 @@ def get_quote(
 @router.post(
     "",
     response_model=QuoteOut,
-    dependencies=[Depends(require_permission("Quotes", "can_create"))],
+    dependencies=[Depends(require_axis_permission("COMMERCIAL_QUOTE", "CREATE"))],
 )
 def create_quote(
     payload: CreateQuoteRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_supabase_current_identity),
 ):
     existing = db.query(Quote).filter(
         Quote.quote_number == payload.quote_number
@@ -263,13 +264,13 @@ def create_quote(
 @router.put(
     "/{quote_id}",
     response_model=QuoteOut,
-    dependencies=[Depends(require_permission("Quotes", "can_edit"))],
+    dependencies=[Depends(require_axis_permission("COMMERCIAL_QUOTE", "UPDATE"))],
 )
 def update_quote(
     quote_id: int,
     payload: UpdateQuoteRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_supabase_current_identity),
 ):
     quote = db.query(Quote).filter(
         Quote.id == quote_id
@@ -330,13 +331,13 @@ def update_quote(
 @router.patch(
     "/{quote_id}/status",
     response_model=QuoteOut,
-    dependencies=[Depends(require_permission("Quotes", "can_edit"))],
+    dependencies=[Depends(require_axis_permission("COMMERCIAL_QUOTE", "UPDATE"))],
 )
 def update_quote_status(
     quote_id: int,
     status: str,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_supabase_current_identity),
 ):
     if status not in STATUS_OPTIONS:
         raise HTTPException(
@@ -371,12 +372,12 @@ def update_quote_status(
 @router.post(
     "/{quote_id}/convert-to-po",
     response_model=dict,
-    dependencies=[Depends(require_permission("Quotes", "can_edit"))],
+    dependencies=[Depends(require_axis_permission("COMMERCIAL_QUOTE", "UPDATE"))],
 )
 def convert_quote_to_po(
     quote_id: int,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_supabase_current_identity),
 ):
     quote = db.query(Quote).filter(
         Quote.id == quote_id
@@ -450,12 +451,12 @@ def convert_quote_to_po(
 @router.delete(
     "/{quote_id}",
     response_model=dict,
-    dependencies=[Depends(require_permission("Quotes", "can_delete"))],
+    dependencies=[Depends(require_axis_permission("COMMERCIAL_QUOTE", "DELETE"))],
 )
 def delete_quote(
     quote_id: int,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_supabase_current_identity),
 ):
     quote = db.query(Quote).filter(
         Quote.id == quote_id

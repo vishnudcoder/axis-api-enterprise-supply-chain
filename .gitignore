@@ -54,3 +54,15 @@ htmlcov/
 
 # TypeScript
 *.tsbuildinfo
+
+# Local backups and recovery files
+*.bak
+*.backup
+*.patch
+*.before-*
+*.pre-*
+*_backup_*/
+backup_*/
+
+# Local database inventories and diagnostic exports
+supabase_readonly_inventory.json

@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+﻿from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .database import get_db
 from .models import Reactor
 from .schemas import CreateReactorRequest, UpdateReactorRequest, ReactorOut
-from .dependencies import get_current_user, require_permission
+from .supabase_authorization import require_axis_permission
+from .supabase_dependencies import get_supabase_current_identity
 
 router = APIRouter(prefix="/api/reactors", tags=["Reactors"])
 
@@ -27,7 +28,7 @@ def audit(db, user, action, entity_id, details=""):
     except Exception:
         pass
 
-@router.get("", response_model=dict, dependencies=[Depends(require_permission("Reactors", "can_view"))])
+@router.get("", response_model=dict, dependencies=[Depends(require_axis_permission("ASSET_REACTOR", "VIEW"))])
 def list_reactors(
     search: str | None = Query(None),
     status: str | None = Query(None),
@@ -62,7 +63,7 @@ def list_reactors(
         "pages": (total + page_size - 1) // page_size if total else 0,
     }
 
-@router.get("/summary", response_model=dict, dependencies=[Depends(require_permission("Reactors", "can_view"))])
+@router.get("/summary", response_model=dict, dependencies=[Depends(require_axis_permission("ASSET_REACTOR", "VIEW"))])
 def summary(db: Session = Depends(get_db)):
     reactors = db.query(Reactor).all()
     return {
@@ -78,15 +79,15 @@ def summary(db: Session = Depends(get_db)):
         ) if reactors else 0,
     }
 
-@router.get("/{reactor_id}", response_model=ReactorOut, dependencies=[Depends(require_permission("Reactors", "can_view"))])
+@router.get("/{reactor_id}", response_model=ReactorOut, dependencies=[Depends(require_axis_permission("ASSET_REACTOR", "VIEW"))])
 def get_reactor(reactor_id: int, db: Session = Depends(get_db)):
     item = db.get(Reactor, reactor_id)
     if not item:
         raise HTTPException(404, "Reactor not found")
     return item
 
-@router.post("", response_model=ReactorOut, dependencies=[Depends(require_permission("Reactors", "can_create"))])
-def create_reactor(payload: CreateReactorRequest, db: Session = Depends(get_db), user=Depends(get_current_user)):
+@router.post("", response_model=ReactorOut, dependencies=[Depends(require_axis_permission("ASSET_REACTOR", "CREATE"))])
+def create_reactor(payload: CreateReactorRequest, db: Session = Depends(get_db), user=Depends(get_supabase_current_identity)):
     if payload.status not in REACTOR_STATUSES:
         raise HTTPException(400, f"Invalid status. Allowed: {', '.join(REACTOR_STATUSES)}")
     if db.query(Reactor).filter(Reactor.reactor_code == payload.reactor_code).first():
@@ -100,12 +101,12 @@ def create_reactor(payload: CreateReactorRequest, db: Session = Depends(get_db),
     db.commit()
     return item
 
-@router.put("/{reactor_id}", response_model=ReactorOut, dependencies=[Depends(require_permission("Reactors", "can_edit"))])
+@router.put("/{reactor_id}", response_model=ReactorOut, dependencies=[Depends(require_axis_permission("ASSET_REACTOR", "UPDATE"))])
 def update_reactor(
     reactor_id: int,
     payload: UpdateReactorRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_supabase_current_identity),
 ):
     item = db.get(Reactor, reactor_id)
     if not item:
@@ -133,12 +134,12 @@ def update_reactor(
     db.commit()
     return item
 
-@router.patch("/{reactor_id}/status", response_model=ReactorOut, dependencies=[Depends(require_permission("Reactors", "can_edit"))])
+@router.patch("/{reactor_id}/status", response_model=ReactorOut, dependencies=[Depends(require_axis_permission("ASSET_REACTOR", "UPDATE"))])
 def update_status(
     reactor_id: int,
     status: str,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_supabase_current_identity),
 ):
     if status not in REACTOR_STATUSES:
         raise HTTPException(400, f"Invalid status. Allowed: {', '.join(REACTOR_STATUSES)}")
@@ -154,8 +155,8 @@ def update_status(
     db.commit()
     return item
 
-@router.delete("/{reactor_id}", dependencies=[Depends(require_permission("Reactors", "can_delete"))])
-def delete_reactor(reactor_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+@router.delete("/{reactor_id}", dependencies=[Depends(require_axis_permission("ASSET_REACTOR", "DELETE"))])
+def delete_reactor(reactor_id: int, db: Session = Depends(get_db), user=Depends(get_supabase_current_identity)):
     item = db.get(Reactor, reactor_id)
     if not item:
         raise HTTPException(404, "Reactor not found")
@@ -165,3 +166,4 @@ def delete_reactor(reactor_id: int, db: Session = Depends(get_db), user=Depends(
     audit(db, user, "DELETE", reactor_id, "")
     db.commit()
     return {"message": "Reactor deleted"}
+

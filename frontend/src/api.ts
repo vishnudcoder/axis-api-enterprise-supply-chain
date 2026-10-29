@@ -1,4 +1,4 @@
-import axios from "axios";
+﻿import axios from "axios";
 
 const API_URL =
   import.meta.env.VITE_API_URL ||
@@ -23,7 +23,7 @@ export async function loginRequest(
   email: string,
   password: string
 ) {
-  const response = await api.post("/api/auth/login", {
+  const response = await api.post("/api/auth/supabase-login", {
     email,
     password,
   });

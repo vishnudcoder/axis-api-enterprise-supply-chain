@@ -1,342 +1,182 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-test("Automated Samples CRUD workflow", async ({ page }) => {
-  const timestamp = Date.now();
+test("links customer requests to Quality samples and Tests Pending", async ({ page }) => {
+  const customerSampleId = "7f9ea6dc-c0d2-45ac-a2b1-5799dc46a101";
+  const qualitySampleId = "8ea7b1ed-d1e3-46bd-b3c2-6800ed57b202";
+  const productId = "9fb8c2fe-e2f4-47ce-c4d3-7911fe68c303";
+  const batchId = "a0c9d30f-f305-48df-d5e4-8a022f79d404";
+  const testRequestId = "b1dae410-0416-49e0-e6f5-9b13308ae505";
+  const product = {
+    product_id: productId,
+    product_code: "API-001",
+    product_name: "Example API",
+  };
+  const customerSample = {
+    sample_id: customerSampleId,
+    sample_number: "CS-2026-0001",
+    sample_status: "REQUESTED",
+    product_id: productId,
+    ...product,
+    requested_at: "2026-10-25T10:00:00Z",
+  };
+  const qualitySample = {
+    quality_sample_id: qualitySampleId,
+    sample_number: "QS-2026-000001",
+    product_id: productId,
+    product_name: product.product_name,
+    customer_sample_id: customerSampleId,
+    customer_sample_number: customerSample.sample_number,
+    sample_type: "CUSTOMER",
+    collected_at: "2026-10-25T12:00:00Z",
+    batch_id: batchId,
+    batch_number: "BATCH-001",
+    status: "REGISTERED",
+  };
+  let qualitySamplePayload: Record<string, unknown> | null = null;
 
-  const sampleNumber = `AUTO-SAMPLE-${timestamp}`;
-  const enquiryId = `AUTO-ENQ-${timestamp}`;
-  const poNumber = `AUTO-PO-${timestamp}`;
-  const batchNumber = `AUTO-BATCH-${timestamp}`;
+  const user = {
+    id: "test-user",
+    email: "quality@example.test",
+    full_name: "Quality Tester",
+    employee_id: null,
+    department: null,
+    phone: null,
+    status: "active",
+    created_at: "2026-10-25T00:00:00Z",
+    last_login: null,
+    role: {
+      id: "managing-director",
+      name: "Managing Director",
+      description: "Sample module test user",
+      permissions: [
+        {
+          page: "Customers",
+          can_view: true,
+          can_create: true,
+          can_edit: true,
+          can_delete: false,
+          can_approve: false,
+        },
+        {
+          page: "Samples",
+          can_view: true,
+          can_create: true,
+          can_edit: true,
+          can_delete: false,
+          can_approve: false,
+        },
+      ],
+    },
+  };
 
-  // LOGIN
-  await page.goto("/");
+  await page.addInitScript((storedUser) => {
+    localStorage.setItem("axis_token", "test-access-token");
+    localStorage.setItem("axis_user", JSON.stringify(storedUser));
+  }, user);
 
-  await page.getByLabel(/email/i).fill("admin@axis.local");
-  await page.getByLabel(/password/i).fill("Admin@123");
-
-  await page
-    .getByRole("button", { name: /login|sign in/i })
-    .click();
-
-  await expect(
-    page.getByText("AXIS Administrator", { exact: false })
-  ).toBeVisible();
-
-  // OPEN SAMPLES
-  await page
-    .getByText("Samples", { exact: true })
-    .first()
-    .click();
-
-  await expect(
-    page.getByRole("button", { name: /Add Sample/i })
-  ).toBeVisible();
-
-  // OPEN ADD SAMPLE
-  await page
-    .getByRole("button", { name: /Add Sample/i })
-    .click();
-
-  await page.waitForTimeout(300);
-
-  // SAMPLE NUMBER
-  const sampleNumberLabel = page.getByText(
-    "Sample Number *",
-    { exact: true }
+  await page.route("**/api/auth/supabase-me", (route) =>
+    route.fulfill({ json: user }),
   );
+  await page.route("**/api/sample-management/**", async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.pathname;
+    const method = route.request().method();
 
-  await expect(sampleNumberLabel).toBeVisible();
-
-  await sampleNumberLabel
-    .locator("..")
-    .locator("input")
-    .fill(sampleNumber);
-
-  // ENQUIRY ID
-  const enquiryLabel = page.getByText("Enquiry ID", {
-    exact: true,
-  });
-
-  if (await enquiryLabel.count() > 0) {
-    const input = enquiryLabel
-      .first()
-      .locator("..")
-      .locator("input");
-
-    if (await input.count() > 0) {
-      await input.fill(enquiryId);
+    if (path.endsWith("/customer-requests/statuses")) {
+      return route.fulfill({ json: { items: ["REQUESTED"] } });
     }
-  }
-
-  // PO NUMBER
-  const poLabel = page.getByText("PO Number", {
-    exact: true,
-  });
-
-  if (await poLabel.count() > 0) {
-    const input = poLabel
-      .first()
-      .locator("..")
-      .locator("input");
-
-    if (await input.count() > 0) {
-      await input.fill(poNumber);
-    }
-  }
-
-  // CUSTOMER
-  const customerLabel = page.getByText("Customer", {
-    exact: true,
-  });
-
-  if (await customerLabel.count() > 0) {
-    const input = customerLabel
-      .first()
-      .locator("..")
-      .locator("input");
-
-    if (await input.count() > 0) {
-      await input.fill("Automation Pharma");
-    }
-  }
-
-  // PRODUCT
-  const productLabel = page.getByText("Product *", {
-    exact: true,
-  });
-
-  await expect(productLabel).toBeVisible();
-
-  await productLabel
-    .locator("..")
-    .locator("input")
-    .fill("Paracetamol API");
-
-  // CAS NUMBER
-  const casLabel = page.getByText("CAS No.", {
-    exact: true,
-  });
-
-  if (await casLabel.count() > 0) {
-    const input = casLabel
-      .first()
-      .locator("..")
-      .locator("input");
-
-    if (await input.count() > 0) {
-      await input.fill("103-90-2");
-    }
-  }
-
-  // BATCH NUMBER
-  const batchLabel = page.getByText("Batch Number", {
-    exact: true,
-  });
-
-  if (await batchLabel.count() > 0) {
-    const input = batchLabel
-      .first()
-      .locator("..")
-      .locator("input");
-
-    if (await input.count() > 0) {
-      await input.fill(batchNumber);
-    }
-  }
-
-  // SAMPLE QUANTITY
-  const quantityLabel = page.getByText(
-    /Sample Quantity/i
-  );
-
-  if (await quantityLabel.count() > 0) {
-    const input = quantityLabel
-      .first()
-      .locator("..")
-      .locator("input");
-
-    if (await input.count() > 0) {
-      await input.fill("100");
-    }
-  }
-
-  // SAMPLE TYPE
-  const sampleTypeLabel = page.getByText(
-    "Sample Type",
-    { exact: true }
-  );
-
-  if (await sampleTypeLabel.count() > 0) {
-    const parent = sampleTypeLabel.first().locator("..");
-
-    const select = parent.locator("select");
-
-    if (await select.count() > 0) {
-      await select.selectOption({
-        label: "Development",
+    if (path.endsWith("/customer-requests/lookups")) {
+      return route.fulfill({
+        json: {
+          customers: [],
+          leads: [],
+          products: [product],
+        },
       });
     }
-  }
-
-  // PURPOSE
-  const purposeLabel = page.getByText(
-    "Purpose",
-    { exact: true }
-  );
-
-  if (await purposeLabel.count() > 0) {
-    const input = purposeLabel
-      .first()
-      .locator("..")
-      .locator("input, textarea");
-
-    if (await input.count() > 0) {
-      await input.first().fill(
-        "Automated sample testing"
-      );
+    if (path.endsWith("/customer-requests") && method === "GET") {
+      return route.fulfill({ json: { items: [customerSample], total: 1 } });
     }
-  }
-
-  // CREATE SAMPLE
-  await page
-    .getByRole("button", {
-      name: /Create Sample/i,
-      exact: true,
-    })
-    .click();
-
-  // VERIFY CREATED SAMPLE
-  let sampleRow = page.locator("tr").filter({
-    hasText: sampleNumber,
-  });
-
-  await expect(sampleRow).toBeVisible();
-
-  await expect(
-    sampleRow.getByText(sampleNumber, {
-      exact: true,
-    })
-  ).toBeVisible();
-
-  await expect(
-    sampleRow.getByText("Paracetamol API", {
-      exact: true,
-    })
-  ).toBeVisible();
-
-  // VIEW SAMPLE
-  await sampleRow
-    .getByRole("button", {
-      name: /View/i,
-    })
-    .click();
-
-  // VERIFY VIEW
-  await expect(
-    page.getByRole("heading", {
-      name: sampleNumber,
-      exact: true,
-    })
-  ).toBeVisible();
-
-  // CLOSE VIEW
-  const closeButton = page.getByRole("button", {
-    name: /Close|Cancel/i,
-  });
-
-  if (await closeButton.count() > 0) {
-    await closeButton.last().click();
-  }
-
-  await expect(
-    page.getByRole("heading", {
-      name: sampleNumber,
-      exact: true,
-    })
-  ).toHaveCount(0);
-
-  // EDIT SAMPLE
-  sampleRow = page.locator("tr").filter({
-    hasText: sampleNumber,
-  });
-
-  await sampleRow
-    .getByRole("button", {
-      name: /Edit/i,
-    })
-    .click();
-
-  // EDIT CUSTOMER
-  const editCustomerLabel = page.getByText(
-    "Customer",
-    { exact: true }
-  );
-
-  if (await editCustomerLabel.count() > 0) {
-    const input = editCustomerLabel
-      .first()
-      .locator("..")
-      .locator("input");
-
-    if (await input.count() > 0) {
-      await input.fill(
-        "Automation Pharma Updated"
-      );
+    if (path.endsWith(`/customer-requests/${customerSampleId}`)) {
+      return route.fulfill({ json: customerSample });
     }
-  }
-
-  // SAVE
-  await page
-    .getByRole("button", {
-      name: /Save Changes|Update Sample/i,
-    })
-    .click();
-
-  // WAIT FOR UPDATE
-  await page.waitForTimeout(1000);
-
-  // RELOAD
-  await page.reload();
-
-  await expect(
-    page.getByRole("button", {
-      name: /Add Sample/i,
-    })
-  ).toBeVisible();
-
-  // FIND SAMPLE AGAIN
-  sampleRow = page.locator("tr").filter({
-    hasText: sampleNumber,
-  });
-
-  await expect(sampleRow).toBeVisible();
-
-  // DELETE SAMPLE
-  const deleteButton = sampleRow.getByRole(
-    "button",
-    {
-      name: /Delete/i,
+    if (path.endsWith("/quality-samples/lookups")) {
+      return route.fulfill({
+        json: {
+          products: [product],
+          batches: [{ batch_id: batchId, batch_number: "BATCH-001", product_id: productId }],
+          material_lots: [],
+          customer_samples: [customerSample],
+          sample_types: [{ sample_type_code: "CUSTOMER", sample_type_name: "Customer sample" }],
+        },
+      });
     }
+    if (path.endsWith("/quality-samples/statuses")) {
+      return route.fulfill({ json: { items: ["REGISTERED"] } });
+    }
+    if (path.endsWith("/quality-samples") && method === "POST") {
+      qualitySamplePayload = route.request().postDataJSON();
+      return route.fulfill({ status: 201, json: qualitySample });
+    }
+    if (path.endsWith("/quality-samples") && method === "GET") {
+      return route.fulfill({ json: { items: [qualitySample], total: 1 } });
+    }
+    if (path.endsWith("/test-requests/statuses")) {
+      return route.fulfill({ json: { request_statuses: ["REQUESTED"], result_statuses: [] } });
+    }
+    if (path.endsWith("/test-requests") && method === "GET") {
+      return route.fulfill({
+        json: {
+          items: [{
+            test_request_id: testRequestId,
+            quality_sample_id: qualitySampleId,
+            sample_number: qualitySample.sample_number,
+            customer_sample_id: customerSampleId,
+            customer_sample_number: customerSample.sample_number,
+            product_code: product.product_code,
+            product_name: product.product_name,
+            test_panel_code: "IDENTITY",
+            requested_at: "2026-10-25T13:00:00Z",
+            status: "REQUESTED",
+          }],
+          total: 1,
+        },
+      });
+    }
+    return route.fulfill({ status: 404, json: { detail: `Unexpected API request: ${path}` } });
+  });
+
+  await page.goto("/samples");
+  await expect(page.getByRole("tab", { name: "Customer Requests" })).toBeVisible();
+
+  const requestRow = page.getByRole("row").filter({ hasText: customerSample.sample_number });
+  await requestRow.getByRole("button", { name: "View" }).click();
+  await page.getByRole("button", { name: "Register Quality Sample" }).click();
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Commercial customer request")).toHaveValue(customerSampleId);
+  await expect(dialog.getByLabel("Product *")).toHaveValue(productId);
+  await expect(dialog.getByLabel("Sample number *")).toHaveCount(0);
+  await dialog.getByLabel("Approved sample type *").selectOption("CUSTOMER");
+  await dialog.getByLabel("Collected at *").fill("2026-10-25T12:00");
+  await dialog.getByLabel("Manufacturing batch *").selectOption(batchId);
+  await dialog.getByRole("button", { name: "Save" }).click();
+
+  await expect(page.getByRole("row").filter({ hasText: qualitySample.sample_number })).toBeVisible();
+  expect(qualitySamplePayload).toMatchObject({
+    p_customer_sample_id: customerSampleId,
+    product_id: productId,
+    sample_type: "CUSTOMER",
+    batch_id: batchId,
+    material_lot_id: null,
+  });
+  expect(qualitySamplePayload?.request_id).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
   );
+  expect(qualitySamplePayload).not.toHaveProperty("sample_number");
 
-  await expect(deleteButton).toBeVisible();
-
-  // ACCEPT BROWSER CONFIRMATION
-  page.once("dialog", async (dialog) => {
-    await dialog.accept();
-  });
-
-  await deleteButton.click({
-    force: true,
-  });
-
-  // WAIT FOR DELETE/API UPDATE
-  await page.waitForTimeout(1000);
-
-  // VERIFY DELETION
-  await expect(
-    page.locator("tr").filter({
-      hasText: sampleNumber,
-    })
-  ).toHaveCount(0);
+  await page.getByRole("tab", { name: "Tests Pending" }).click();
+  const testRow = page.getByRole("row").filter({ hasText: testRequestId });
+  await expect(testRow).toContainText(customerSample.sample_number);
+  await expect(testRow).toContainText(qualitySample.sample_number);
 });

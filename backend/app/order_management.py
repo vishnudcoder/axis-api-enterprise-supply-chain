@@ -1,11 +1,11 @@
-from datetime import datetime, timezone
+﻿from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .database import get_db
-from .dependencies import require_permission
+from .supabase_authorization import require_axis_permission
 from .models import AuditLog, COA, ProductionBatch, ProductionPlan, PurchaseOrder, SupplyChain
 
 router = APIRouter(
@@ -131,7 +131,7 @@ def list_orders(
     page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Order Management", "can_view")
+        require_axis_permission("COMMERCIAL_SALES_ORDER", "VIEW")
     ),
 ):
     query = apply_filters(db.query(PurchaseOrder), search, status)
@@ -159,7 +159,7 @@ def list_orders(
 def order_summary(
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Order Management", "can_view")
+        require_axis_permission("COMMERCIAL_SALES_ORDER", "VIEW")
     ),
 ):
     orders = db.query(PurchaseOrder).all()
@@ -203,7 +203,7 @@ def get_order(
     order_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Order Management", "can_view")
+        require_axis_permission("COMMERCIAL_SALES_ORDER", "VIEW")
     ),
 ):
     order = (
@@ -223,7 +223,7 @@ def get_order_lifecycle(
     order_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Order Management", "can_view")
+        require_axis_permission("COMMERCIAL_SALES_ORDER", "VIEW")
     ),
 ):
     order = db.query(PurchaseOrder).filter(PurchaseOrder.id == order_id).first()
@@ -343,7 +343,7 @@ def update_order_status(
     status: str = Query(...),
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Order Management", "can_edit")
+        require_axis_permission("COMMERCIAL_SALES_ORDER", "UPDATE")
     ),
 ):
     if status not in STATUS_VALUES:
@@ -366,7 +366,7 @@ def update_order_status(
     if status not in ALLOWED_TRANSITIONS.get(current_status, set()):
         raise HTTPException(
             status_code=409,
-            detail=f"Invalid order transition: {current_status} → {status}",
+            detail=f"Invalid order transition: {current_status} â†’ {status}",
         )
 
     order.status = status
@@ -399,3 +399,4 @@ def update_order_status(
     db.refresh(order)
 
     return order_response(order)
+

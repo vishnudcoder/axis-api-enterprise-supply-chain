@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
@@ -10,7 +10,8 @@ from .schemas import (
     UpdateProductionPlanRequest,
     ProductionPlanOut,
 )
-from .dependencies import get_current_user, require_permission
+from .supabase_authorization import require_axis_permission
+from .supabase_dependencies import get_supabase_current_identity
 
 router = APIRouter(prefix="/api/ppic", tags=["PPIC"])
 
@@ -31,7 +32,7 @@ def audit(db, user, action, entity_id, details=""):
     except Exception:
         pass
 
-@router.get("", response_model=dict, dependencies=[Depends(require_permission("PPIC", "can_view"))])
+@router.get("", response_model=dict, dependencies=[Depends(require_axis_permission("PPIC_MPS", "VIEW"))])
 def list_plans(
     search: str | None = Query(None),
     planning_status: str | None = Query(None),
@@ -65,7 +66,7 @@ def list_plans(
         "pages": (total + page_size - 1) // page_size if total else 0,
     }
 
-@router.get("/summary", response_model=dict, dependencies=[Depends(require_permission("PPIC", "can_view"))])
+@router.get("/summary", response_model=dict, dependencies=[Depends(require_axis_permission("PPIC_MPS", "VIEW"))])
 def summary(db: Session = Depends(get_db)):
     plans = db.query(ProductionPlan).all()
     active = [x for x in plans if x.planning_status != "Cancelled"]
@@ -80,15 +81,15 @@ def summary(db: Session = Depends(get_db)):
         "material_blocked": sum(x.material_status == "Blocked" for x in active),
     }
 
-@router.get("/{plan_id}", response_model=ProductionPlanOut, dependencies=[Depends(require_permission("PPIC", "can_view"))])
+@router.get("/{plan_id}", response_model=ProductionPlanOut, dependencies=[Depends(require_axis_permission("PPIC_MPS", "VIEW"))])
 def get_plan(plan_id: int, db: Session = Depends(get_db)):
     item = db.get(ProductionPlan, plan_id)
     if not item:
         raise HTTPException(404, "Production plan not found")
     return item
 
-@router.post("", response_model=ProductionPlanOut, dependencies=[Depends(require_permission("PPIC", "can_create"))])
-def create_plan(payload: CreateProductionPlanRequest, db: Session = Depends(get_db), user=Depends(get_current_user)):
+@router.post("", response_model=ProductionPlanOut, dependencies=[Depends(require_axis_permission("PPIC_MPS", "CREATE"))])
+def create_plan(payload: CreateProductionPlanRequest, db: Session = Depends(get_db), user=Depends(get_supabase_current_identity)):
     if db.query(ProductionPlan).filter(ProductionPlan.plan_number == payload.plan_number).first():
         raise HTTPException(409, "Plan number already exists")
     item = ProductionPlan(**payload.model_dump(exclude_none=True))
@@ -99,8 +100,8 @@ def create_plan(payload: CreateProductionPlanRequest, db: Session = Depends(get_
     db.commit()
     return item
 
-@router.put("/{plan_id}", response_model=ProductionPlanOut, dependencies=[Depends(require_permission("PPIC", "can_edit"))])
-def update_plan(plan_id: int, payload: UpdateProductionPlanRequest, db: Session = Depends(get_db), user=Depends(get_current_user)):
+@router.put("/{plan_id}", response_model=ProductionPlanOut, dependencies=[Depends(require_axis_permission("PPIC_MPS", "UPDATE"))])
+def update_plan(plan_id: int, payload: UpdateProductionPlanRequest, db: Session = Depends(get_db), user=Depends(get_supabase_current_identity)):
     item = db.get(ProductionPlan, plan_id)
     if not item:
         raise HTTPException(404, "Production plan not found")
@@ -120,8 +121,8 @@ def update_plan(plan_id: int, payload: UpdateProductionPlanRequest, db: Session 
     db.commit()
     return item
 
-@router.patch("/{plan_id}/status", response_model=ProductionPlanOut, dependencies=[Depends(require_permission("PPIC", "can_edit"))])
-def update_plan_status(plan_id: int, status: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
+@router.patch("/{plan_id}/status", response_model=ProductionPlanOut, dependencies=[Depends(require_axis_permission("PPIC_MPS", "UPDATE"))])
+def update_plan_status(plan_id: int, status: str, db: Session = Depends(get_db), user=Depends(get_supabase_current_identity)):
     if status not in PLAN_STATUSES:
         raise HTTPException(400, f"Invalid planning status. Allowed: {', '.join(PLAN_STATUSES)}")
     item = db.get(ProductionPlan, plan_id)
@@ -134,8 +135,8 @@ def update_plan_status(plan_id: int, status: str, db: Session = Depends(get_db),
     db.commit()
     return item
 
-@router.delete("/{plan_id}", dependencies=[Depends(require_permission("PPIC", "can_delete"))])
-def delete_plan(plan_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+@router.delete("/{plan_id}", dependencies=[Depends(require_axis_permission("PPIC_MPS", "DELETE"))])
+def delete_plan(plan_id: int, db: Session = Depends(get_db), user=Depends(get_supabase_current_identity)):
     item = db.get(ProductionPlan, plan_id)
     if not item:
         raise HTTPException(404, "Production plan not found")
@@ -144,4 +145,5 @@ def delete_plan(plan_id: int, db: Session = Depends(get_db), user=Depends(get_cu
     audit(db, user, "DELETE", plan_id, "")
     db.commit()
     return {"message": "Production plan deleted"}
+
 

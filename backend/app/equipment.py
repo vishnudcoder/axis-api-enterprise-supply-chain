@@ -1,7 +1,9 @@
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from .business_audit import write_business_audit
 from .database import get_db
 from .models import Equipment
 from .schemas import (
@@ -9,7 +11,8 @@ from .schemas import (
     UpdateEquipmentRequest,
     EquipmentOut,
 )
-from .dependencies import get_current_user, require_permission
+from .supabase_authorization import require_axis_permission
+from .supabase_dependencies import get_supabase_current_identity
 
 
 router = APIRouter(
@@ -60,12 +63,56 @@ def equipment_to_dict(equipment: Equipment):
     }
 
 
+def equipment_audit_snapshot(equipment: Equipment) -> dict:
+    """Return a JSON-safe snapshot of an equipment record."""
+    data = equipment_to_dict(equipment)
+
+    for field in (
+        "last_maintenance",
+        "next_maintenance",
+        "created_at",
+        "updated_at",
+    ):
+        value = data.get(field)
+        if value is not None and hasattr(value, "isoformat"):
+            data[field] = value.isoformat()
+
+    return data
+
+
+def write_equipment_audit(
+    db: Session,
+    *,
+    identity: dict,
+    action_code: str,
+    equipment: Equipment,
+    before_state: dict | None = None,
+    after_state: dict | None = None,
+    changed_fields: list[str] | None = None,
+) -> None:
+    """Write an equipment audit entry in the current transaction."""
+    write_business_audit(
+        db,
+        actor_user_id=identity["user_id"],
+        action_code=action_code,
+        record_schema="public",
+        record_table="equipment",
+        record_key={
+            "id": equipment.id,
+            "equipment_code": equipment.equipment_code,
+        },
+        before_state=before_state,
+        after_state=after_state,
+        changed_fields=changed_fields,
+    )
+
+
 @router.get(
     "",
     dependencies=[
         Depends(
-            require_permission(
-                "Equipment & Utilities",
+            require_axis_permission(
+                "ASSET_EQUIPMENT",
                 "can_view",
             )
         )
@@ -78,7 +125,6 @@ def list_equipment(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
 ):
     query = db.query(Equipment)
 
@@ -125,8 +171,8 @@ def list_equipment(
     "/summary",
     dependencies=[
         Depends(
-            require_permission(
-                "Equipment & Utilities",
+            require_axis_permission(
+                "ASSET_EQUIPMENT",
                 "can_view",
             )
         )
@@ -134,7 +180,6 @@ def list_equipment(
 )
 def equipment_summary(
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
 ):
     items = db.query(Equipment).all()
 
@@ -189,8 +234,8 @@ def equipment_summary(
     response_model=EquipmentOut,
     dependencies=[
         Depends(
-            require_permission(
-                "Equipment & Utilities",
+            require_axis_permission(
+                "ASSET_EQUIPMENT",
                 "can_view",
             )
         )
@@ -199,7 +244,6 @@ def equipment_summary(
 def get_equipment(
     equipment_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
 ):
     equipment = (
         db.query(Equipment)
@@ -221,8 +265,8 @@ def get_equipment(
     response_model=EquipmentOut,
     dependencies=[
         Depends(
-            require_permission(
-                "Equipment & Utilities",
+            require_axis_permission(
+                "ASSET_EQUIPMENT",
                 "can_create",
             )
         )
@@ -231,13 +275,12 @@ def get_equipment(
 def create_equipment(
     payload: CreateEquipmentRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    identity: dict = Depends(get_supabase_current_identity),
 ):
     existing = (
         db.query(Equipment)
         .filter(
-            Equipment.equipment_code
-            == payload.equipment_code
+            Equipment.equipment_code == payload.equipment_code
         )
         .first()
     )
@@ -250,9 +293,30 @@ def create_equipment(
 
     equipment = Equipment(**payload.model_dump())
 
-    db.add(equipment)
-    db.commit()
-    db.refresh(equipment)
+    try:
+        db.add(equipment)
+
+        # Assign database-generated fields before building the audit record.
+        db.flush()
+
+        after_state = equipment_audit_snapshot(equipment)
+
+        write_equipment_audit(
+            db,
+            identity=identity,
+            action_code="INSERT",
+            equipment=equipment,
+            after_state=after_state,
+            changed_fields=list(after_state.keys()),
+        )
+
+        # Equipment and audit entry commit together.
+        db.commit()
+        db.refresh(equipment)
+
+    except Exception:
+        db.rollback()
+        raise
 
     return equipment
 
@@ -262,8 +326,8 @@ def create_equipment(
     response_model=EquipmentOut,
     dependencies=[
         Depends(
-            require_permission(
-                "Equipment & Utilities",
+            require_axis_permission(
+                "ASSET_EQUIPMENT",
                 "can_edit",
             )
         )
@@ -273,7 +337,7 @@ def update_equipment(
     equipment_id: int,
     payload: UpdateEquipmentRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    identity: dict = Depends(get_supabase_current_identity),
 ):
     equipment = (
         db.query(Equipment)
@@ -287,16 +351,13 @@ def update_equipment(
             detail="Equipment not found",
         )
 
-    updates = payload.model_dump(
-        exclude_unset=True
-    )
+    updates = payload.model_dump(exclude_unset=True)
 
     if "equipment_code" in updates:
         duplicate = (
             db.query(Equipment)
             .filter(
-                Equipment.equipment_code
-                == updates["equipment_code"],
+                Equipment.equipment_code == updates["equipment_code"],
                 Equipment.id != equipment_id,
             )
             .first()
@@ -308,11 +369,32 @@ def update_equipment(
                 detail="Equipment code already exists",
             )
 
-    for key, value in updates.items():
-        setattr(equipment, key, value)
+    before_state = equipment_audit_snapshot(equipment)
 
-    db.commit()
-    db.refresh(equipment)
+    try:
+        for key, value in updates.items():
+            setattr(equipment, key, value)
+
+        db.flush()
+
+        after_state = equipment_audit_snapshot(equipment)
+
+        write_equipment_audit(
+            db,
+            identity=identity,
+            action_code="UPDATE",
+            equipment=equipment,
+            before_state=before_state,
+            after_state=after_state,
+            changed_fields=list(updates.keys()),
+        )
+
+        db.commit()
+        db.refresh(equipment)
+
+    except Exception:
+        db.rollback()
+        raise
 
     return equipment
 
@@ -322,8 +404,8 @@ def update_equipment(
     response_model=EquipmentOut,
     dependencies=[
         Depends(
-            require_permission(
-                "Equipment & Utilities",
+            require_axis_permission(
+                "ASSET_EQUIPMENT",
                 "can_edit",
             )
         )
@@ -333,7 +415,7 @@ def update_equipment_status(
     equipment_id: int,
     status: str,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    identity: dict = Depends(get_supabase_current_identity),
 ):
     if status not in EQUIPMENT_STATUSES:
         raise HTTPException(
@@ -353,10 +435,31 @@ def update_equipment_status(
             detail="Equipment not found",
         )
 
-    equipment.status = status
+    before_state = equipment_audit_snapshot(equipment)
 
-    db.commit()
-    db.refresh(equipment)
+    try:
+        equipment.status = status
+
+        db.flush()
+
+        after_state = equipment_audit_snapshot(equipment)
+
+        write_equipment_audit(
+            db,
+            identity=identity,
+            action_code="UPDATE",
+            equipment=equipment,
+            before_state=before_state,
+            after_state=after_state,
+            changed_fields=["status"],
+        )
+
+        db.commit()
+        db.refresh(equipment)
+
+    except Exception:
+        db.rollback()
+        raise
 
     return equipment
 
@@ -365,8 +468,8 @@ def update_equipment_status(
     "/{equipment_id}",
     dependencies=[
         Depends(
-            require_permission(
-                "Equipment & Utilities",
+            require_axis_permission(
+                "ASSET_EQUIPMENT",
                 "can_delete",
             )
         )
@@ -375,7 +478,7 @@ def update_equipment_status(
 def delete_equipment(
     equipment_id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    identity: dict = Depends(get_supabase_current_identity),
 ):
     equipment = (
         db.query(Equipment)
@@ -389,8 +492,26 @@ def delete_equipment(
             detail="Equipment not found",
         )
 
-    db.delete(equipment)
-    db.commit()
+    before_state = equipment_audit_snapshot(equipment)
+
+    try:
+        write_equipment_audit(
+            db,
+            identity=identity,
+            action_code="DELETE",
+            equipment=equipment,
+            before_state=before_state,
+            changed_fields=list(before_state.keys()),
+        )
+
+        db.delete(equipment)
+
+        # Deletion and audit entry commit together.
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
 
     return {
         "message": "Equipment deleted successfully"

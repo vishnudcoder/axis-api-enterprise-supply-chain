@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -6,7 +6,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .database import get_db
-from .dependencies import require_permission
+from .supabase_authorization import require_axis_permission
 from .models import AuditLog, COA, ProductionBatch
 from .schemas import (
     CreateCOARequest,
@@ -90,7 +90,7 @@ def list_coas(
     page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("COA", "can_view")
+        require_axis_permission("QUALITY_COA", "VIEW")
     ),
 ):
     query = db.query(COA)
@@ -149,7 +149,7 @@ def list_coas(
 def coa_summary(
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("COA", "can_view")
+        require_axis_permission("QUALITY_COA", "VIEW")
     ),
 ):
     total = (
@@ -224,7 +224,7 @@ def get_coa(
     coa_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("COA", "can_view")
+        require_axis_permission("QUALITY_COA", "VIEW")
     ),
 ):
     item = (
@@ -251,7 +251,7 @@ def create_coa(
     payload: CreateCOARequest,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("COA", "can_create")
+        require_axis_permission("QUALITY_COA", "CREATE")
     ),
 ):
     if payload.test_status not in TEST_STATUSES:
@@ -344,7 +344,7 @@ def update_coa(
     payload: UpdateCOARequest,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("COA", "can_edit")
+        require_axis_permission("QUALITY_COA", "UPDATE")
     ),
 ):
     item = (
@@ -452,7 +452,7 @@ def update_coa_status(
     status: str,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("COA", "can_edit")
+        require_axis_permission("QUALITY_COA", "UPDATE")
     ),
 ):
     item = (
@@ -531,7 +531,7 @@ def delete_coa(
     coa_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("COA", "can_delete")
+        require_axis_permission("QUALITY_COA", "DELETE")
     ),
 ):
     item = (

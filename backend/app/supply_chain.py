@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -6,7 +6,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .database import get_db
-from .dependencies import get_current_user, require_permission
+from .supabase_authorization import require_axis_permission
 from .models import AuditLog, SupplyChain, COA
 from .schemas import (
     CreateSupplyChainRequest,
@@ -106,7 +106,7 @@ def list_supply_chain(
     page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Supply Chain", "can_view")
+        require_axis_permission("COMMERCIAL_SHIPMENT", "VIEW")
     ),
 ):
     query = db.query(SupplyChain)
@@ -171,7 +171,7 @@ def list_supply_chain(
 def supply_chain_summary(
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Supply Chain", "can_view")
+        require_axis_permission("COMMERCIAL_SHIPMENT", "VIEW")
     ),
 ):
     total_shipments = (
@@ -250,7 +250,7 @@ def get_supply_chain(
     shipment_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Supply Chain", "can_view")
+        require_axis_permission("COMMERCIAL_SHIPMENT", "VIEW")
     ),
 ):
     item = (
@@ -277,7 +277,7 @@ def create_supply_chain(
     payload: CreateSupplyChainRequest,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Supply Chain", "can_create")
+        require_axis_permission("COMMERCIAL_SHIPMENT", "CREATE")
     ),
 ):
     if payload.status not in STATUS_VALUES:
@@ -380,7 +380,7 @@ def update_supply_chain(
     payload: UpdateSupplyChainRequest,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Supply Chain", "can_edit")
+        require_axis_permission("COMMERCIAL_SHIPMENT", "UPDATE")
     ),
 ):
     item = (
@@ -479,7 +479,7 @@ def update_supply_chain_status(
     status: str,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Supply Chain", "can_edit")
+        require_axis_permission("COMMERCIAL_SHIPMENT", "UPDATE")
     ),
 ):
     item = (
@@ -545,7 +545,7 @@ def delete_supply_chain(
     shipment_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(
-        require_permission("Supply Chain", "can_delete")
+        require_axis_permission("COMMERCIAL_SHIPMENT", "DELETE")
     ),
 ):
     item = (

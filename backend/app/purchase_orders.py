@@ -1,10 +1,10 @@
-from datetime import datetime, timezone
+﻿from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from .database import get_db
-from .dependencies import require_permission
+from .supabase_authorization import require_axis_permission
 from .models import AuditLog, PurchaseOrder
 from .schemas import (
     CreatePurchaseOrderRequest,
@@ -15,7 +15,7 @@ from .schemas import (
 
 router = APIRouter(
     prefix="/api/purchase-orders",
-    tags=["Purchase Orders"],
+    tags=["PROCUREMENT_PURCHASE_ORDER"],
 )
 
 
@@ -101,7 +101,7 @@ def list_purchase_orders(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
-    _=Depends(require_permission("Purchase Orders", "can_view")),
+    _=Depends(require_axis_permission("PROCUREMENT_PURCHASE_ORDER", "VIEW")),
 ):
     query = db.query(PurchaseOrder)
 
@@ -136,7 +136,7 @@ def list_purchase_orders(
 )
 def purchase_order_summary(
     db: Session = Depends(get_db),
-    _=Depends(require_permission("Purchase Orders", "can_view")),
+    _=Depends(require_axis_permission("PROCUREMENT_PURCHASE_ORDER", "VIEW")),
 ):
     orders = db.query(PurchaseOrder).all()
 
@@ -190,7 +190,7 @@ def purchase_order_summary(
 def get_purchase_order(
     po_id: int,
     db: Session = Depends(get_db),
-    _=Depends(require_permission("Purchase Orders", "can_view")),
+    _=Depends(require_axis_permission("PROCUREMENT_PURCHASE_ORDER", "VIEW")),
 ):
     po = (
         db.query(PurchaseOrder)
@@ -215,9 +215,9 @@ def create_purchase_order(
     payload: CreatePurchaseOrderRequest,
     db: Session = Depends(get_db),
     user=Depends(
-        require_permission(
-            "Purchase Orders",
-            "can_create",
+        require_axis_permission(
+            "PROCUREMENT_PURCHASE_ORDER",
+            "CREATE",
         )
     ),
 ):
@@ -304,9 +304,9 @@ def update_purchase_order(
     payload: UpdatePurchaseOrderRequest,
     db: Session = Depends(get_db),
     user=Depends(
-        require_permission(
-            "Purchase Orders",
-            "can_edit",
+        require_axis_permission(
+            "PROCUREMENT_PURCHASE_ORDER",
+            "UPDATE",
         )
     ),
 ):
@@ -390,9 +390,9 @@ def update_purchase_order_status(
     status: str = Query(...),
     db: Session = Depends(get_db),
     user=Depends(
-        require_permission(
-            "Purchase Orders",
-            "can_edit",
+        require_axis_permission(
+            "PROCUREMENT_PURCHASE_ORDER",
+            "UPDATE",
         )
     ),
 ):
@@ -436,9 +436,9 @@ def delete_purchase_order(
     po_id: int,
     db: Session = Depends(get_db),
     user=Depends(
-        require_permission(
-            "Purchase Orders",
-            "can_delete",
+        require_axis_permission(
+            "PROCUREMENT_PURCHASE_ORDER",
+            "DELETE",
         )
     ),
 ):

@@ -70,7 +70,7 @@ test("Cross-module data integrity across Quote → PO → PPIC → Production �
         unit_price_usd: 250,
         total_value_usd: 25000,
         currency: "USD",
-        payment_terms: "30 Days",
+        payment_terms: "NET30",
         delivery_terms: "FOB",
         validity_days: 30,
         status: "Draft",

@@ -61,6 +61,32 @@ uvicorn app.main:app --reload --port 8000
 FastAPI docs:
 http://127.0.0.1:8000/docs
 
+## Sample Management
+
+The Sample Management development changes use the existing
+`commercial.customer_sample`, `quality.sample`, `quality.test_request`, and
+`quality.test_attempt` tables through `/api/sample-management`. The Customer
+Requests, Quality Samples, and Tests Pending views remain separate, with
+commercial requests traceable through the Quality and test views.
+
+Quality samples link to commercial requests using the existing
+`quality.sample.customer_sample_id` foreign key. The registration form sends
+the selected commercial `sample_id` as `p_customer_sample_id` (a UUID), not as
+a sample number. The backend invokes `quality.create_sample` with the
+authenticated AXIS identity and a request ID. The database function generates
+the Quality sample number and enforces product/request matching, approved
+sample types, and the requirement to select exactly one batch or material lot.
+The existing database row-audit trigger records Quality sample writes.
+
+The sample type options are loaded from the active, approved database catalog;
+the application does not invent values. At the time these development changes
+were checked, that catalog had no active approved entries, so Quality must
+approve a sample type before a sample can be registered. The API registry
+entry `QUALITY.CREATE_SAMPLE` also remains `DRAFT`; it was not activated.
+Customer receipt/tracking details and test review/retest data are not included
+because their approved contracts are not available in the current development
+scope.
+
 ## Frontend
 
 Open a second terminal:

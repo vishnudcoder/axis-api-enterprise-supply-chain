@@ -1,5 +1,7 @@
 from datetime import datetime
-from pydantic import BaseModel, EmailStr, Field
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 class PermissionOut(BaseModel):
     page: str
@@ -646,6 +648,62 @@ class SampleOut(SampleBase):
     updated_at: datetime
 
 
+class CustomerSampleCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sample_number: str = Field(min_length=1, max_length=80)
+    product_id: UUID
+    customer_id: UUID | None = None
+    lead_id: UUID | None = None
+    coa_required: bool = False
+
+
+class CustomerSampleUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sample_number: str | None = Field(default=None, min_length=1, max_length=80)
+    product_id: UUID | None = None
+    customer_id: UUID | None = None
+    lead_id: UUID | None = None
+    coa_required: bool | None = None
+
+
+class QualitySampleCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+    product_id: UUID
+    sample_type: str = Field(min_length=1, max_length=50)
+    collected_at: datetime
+    batch_id: UUID | None = None
+    material_lot_id: UUID | None = None
+    p_customer_sample_id: UUID | None = None
+
+
+class TestRequestCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    quality_sample_id: UUID
+    specification_revision_id: UUID
+    test_panel_code: str = Field(min_length=1, max_length=80)
+
+
+class TestAttemptCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    attempt_no: int = Field(gt=0)
+    test_code: str = Field(min_length=1, max_length=80)
+
+
+class TestAttemptUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    result_value: float | None = None
+    result_text: str | None = None
+    result_data: dict | list | str | int | float | bool | None = None
+    result_uom_id: UUID | None = None
+
+
 
 class QuoteBase(BaseModel):
     quote_number: str = Field(min_length=2, max_length=50)
@@ -764,6 +822,52 @@ class UpdateProductionBatchRequest(BaseModel):
 
 
 class ProductionBatchOut(ProductionBatchBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomerBase(BaseModel):
+    customer_code: str = Field(min_length=2, max_length=50)
+    customer_name: str = Field(min_length=2, max_length=180)
+    contact_person: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    country: str | None = None
+    city: str | None = None
+    address: str | None = None
+    customer_type: str = "Pharmaceutical"
+    status: str = "Active"
+    notes: str | None = None
+
+
+class CreateCustomerRequest(CustomerBase):
+    pass
+
+
+class UpdateCustomerRequest(BaseModel):
+    customer_code: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=50,
+    )
+    customer_name: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=180,
+    )
+    contact_person: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    country: str | None = None
+    city: str | None = None
+    address: str | None = None
+    customer_type: str | None = None
+    status: str | None = None
+    notes: str | None = None
+
+
+class CustomerOut(CustomerBase):
     id: int
     created_at: datetime
     updated_at: datetime
