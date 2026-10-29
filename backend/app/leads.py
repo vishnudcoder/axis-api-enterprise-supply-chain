@@ -1,770 +1,164 @@
-from datetime import datetime, timezone
+﻿from uuid import UUID, uuid4
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
 
-from .database import get_db
 from .supabase_authorization import require_axis_permission
-from .supabase_dependencies import get_supabase_current_identity
-from .business_audit import write_business_audit
-from .models import Lead
-from .schemas import CreateLeadRequest, UpdateLeadRequest
+from .supabase_client import supabase
+
+router = APIRouter(prefix="/api/leads", tags=["Commercial Leads"])
 
 
-router = APIRouter(
-    prefix="/api/leads",
-    tags=["Leads"],
-)
-
-
-# ============================================================
-# VALID VALUES
-# ============================================================
-
-VALID_STAGES = {
-    "Lead",
-    "COA Shared",
-    "Sample Sent",
-    "Quote Sent",
-    "PO Received",
-}
-
-VALID_MARKETS = {
-    "US",
-    "EU",
-    "Japan",
-    "ROW",
-}
-
-
-# ============================================================
-# RESPONSE HELPER
-# ============================================================
-
-def lead_response(lead: Lead) -> dict:
-    """
-    Convert SQLAlchemy Lead object into a JSON-friendly dictionary.
-    """
-
-    return {
-        "id": lead.id,
-        "enquiry_id": lead.enquiry_id,
-        "customer": lead.customer,
-        "product": lead.product,
-        "cas_no": lead.cas_no,
-        "market": lead.market,
-        "regulatory_path": lead.regulatory_path,
-        "tech_pack": lead.tech_pack,
-        "quantity_kg": float(lead.quantity_kg or 0),
-        "value_usd": float(lead.value_usd or 0),
-        "stage": lead.stage,
-        "owner": lead.owner,
-        "next_step": lead.next_step,
-        "development": lead.development,
-        "created_at": lead.created_at,
-        "updated_at": lead.updated_at,
-    }
-
-
-# ============================================================
-# LEADS SUMMARY
-# ============================================================
-# IMPORTANT:
-# This endpoint MUST be before /{lead_id}.
-#
-# Otherwise:
-# /api/leads/summary
-# could be interpreted as:
-# lead_id = "summary"
-# ============================================================
-
-@router.get(
-    "/summary",
-    response_model=dict,
-)
-def leads_summary(
-    db: Session = Depends(get_db),
-    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "VIEW")),
-):
-    """
-    Return live Leads statistics for the dashboard.
-
-    Includes:
-    - total enquiries
-    - pipeline value
-    - regulated markets
-    - tech-pack pending
-    - development enquiries
-    - commercial funnel
-    """
-
-    leads = (
-        db.query(Lead)
-        .order_by(Lead.created_at.desc())
-        .all()
-    )
-
-    # --------------------------------------------------------
-    # TOTAL ACTIVE ENQUIRIES
-    # --------------------------------------------------------
-
-    total_enquiries = len(leads)
-
-    # --------------------------------------------------------
-    # PIPELINE VALUE
-    # --------------------------------------------------------
-
-    pipeline_value = sum(
-        float(lead.value_usd or 0)
-        for lead in leads
-    )
-
-    # --------------------------------------------------------
-    # REGULATED MARKETS
-    #
-    # US, EU and Japan are treated as regulated markets.
-    # ROW is not counted here.
-    # --------------------------------------------------------
-
-    regulated_markets = sum(
-        1
-        for lead in leads
-        if lead.market in {
-            "US",
-            "EU",
-            "Japan",
-        }
-    )
-
-    # --------------------------------------------------------
-    # TECH PACK PENDING
-    # --------------------------------------------------------
-
-    tech_pack_pending = sum(
-        1
-        for lead in leads
-        if (lead.tech_pack or "").strip().lower() == "pending"
-    )
-
-    # --------------------------------------------------------
-    # DEVELOPMENT ENQUIRIES
-    # --------------------------------------------------------
-
-    development_enquiries = sum(
-        1
-        for lead in leads
-        if lead.development is True
-    )
-
-    # --------------------------------------------------------
-    # COMMERCIAL FUNNEL
-    # --------------------------------------------------------
-
-    funnel = []
-
-    stages = [
-        "Lead",
-        "COA Shared",
-        "Sample Sent",
-        "Quote Sent",
-        "PO Received",
-    ]
-
-    for stage in stages:
-
-        stage_leads = [
-            lead
-            for lead in leads
-            if lead.stage == stage
-        ]
-
-        stage_value = sum(
-            float(lead.value_usd or 0)
-            for lead in stage_leads
-        )
-
-        funnel.append(
-            {
-                "label": stage,
-                "count": len(stage_leads),
-                "value": stage_value,
-            }
-        )
-
-    # --------------------------------------------------------
-    # RESPONSE
-    # --------------------------------------------------------
-
-    return {
-        "total_enquiries": total_enquiries,
-        "pipeline_value": pipeline_value,
-        "regulated_markets": regulated_markets,
-        "tech_pack_pending": tech_pack_pending,
-        "development_enquiries": development_enquiries,
-        "funnel": funnel,
-    }
-
-
-# ============================================================
-# LIST LEADS
-# ============================================================
-
-@router.get(
-    "",
-    response_model=list,
-)
-def list_leads(
-    search: str | None = Query(
-        default=None,
-        description="Search enquiry ID, customer, product or owner",
-    ),
-    stage: str | None = Query(
-        default=None,
-        description="Filter by commercial stage",
-    ),
-    market: str | None = Query(
-        default=None,
-        description="Filter by market",
-    ),
-    page: int = Query(
-        default=1,
-        ge=1,
-        description="Page number",
-    ),
-    page_size: int = Query(
-        default=20,
-        ge=1,
-        le=100,
-        description="Number of records per page",
-    ),
-    db: Session = Depends(get_db),
-    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "VIEW")),
-):
-    """
-    Return Leads with optional search, stage and market filters.
-    """
-
-    query = db.query(Lead)
-
-    # --------------------------------------------------------
-    # SEARCH
-    # --------------------------------------------------------
-
-    if search and search.strip():
-
-        term = f"%{search.strip()}%"
-
-        query = query.filter(
-            Lead.enquiry_id.ilike(term)
-            | Lead.customer.ilike(term)
-            | Lead.product.ilike(term)
-            | Lead.owner.ilike(term)
-        )
-
-    # --------------------------------------------------------
-    # STAGE FILTER
-    # --------------------------------------------------------
-
-    if stage:
-
-        if stage not in VALID_STAGES:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Invalid stage. Allowed values: "
-                    + ", ".join(sorted(VALID_STAGES))
-                ),
-            )
-
-        query = query.filter(
-            Lead.stage == stage
-        )
-
-    # --------------------------------------------------------
-    # MARKET FILTER
-    # --------------------------------------------------------
-
-    if market:
-
-        if market not in VALID_MARKETS:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Invalid market. Allowed values: "
-                    + ", ".join(sorted(VALID_MARKETS))
-                ),
-            )
-
-        query = query.filter(
-            Lead.market == market
-        )
-
-    # --------------------------------------------------------
-    # PAGINATION
-    # --------------------------------------------------------
-
-    leads = (
-        query
-        .order_by(
-            Lead.created_at.desc()
-        )
-        .offset(
-            (page - 1) * page_size
-        )
-        .limit(page_size)
-        .all()
-    )
-
-    return [
-        lead_response(lead)
-        for lead in leads
-    ]
-
-
-# ============================================================
-# GET SINGLE LEAD
-# ============================================================
-
-@router.get(
-    "/{lead_id}",
-    response_model=dict,
-)
-def get_lead(
-    lead_id: int,
-    db: Session = Depends(get_db),
-    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "VIEW")),
-):
-    """
-    Return one Lead by database ID.
-    """
-
-    lead = (
-        db.query(Lead)
-        .filter(
-            Lead.id == lead_id
-        )
-        .first()
-    )
-
-    if not lead:
+def rpc(name: str, params: dict[str, Any]) -> Any:
+    try:
+        result = supabase.schema("commercial").rpc(name, params).execute()
+        return result.data
+    except Exception as exc:
         raise HTTPException(
-            status_code=404,
-            detail="Lead not found",
-        )
-
-    return lead_response(lead)
+            status_code=400,
+            detail=f"Commercial workflow '{name}' failed: {str(exc)}",
+        ) from exc
 
 
-# ============================================================
-# CREATE LEAD
-# ============================================================
+class LeadCreate(BaseModel):
+    lead_number: str = Field(min_length=1, max_length=100)
+    lead_status: str = "NEW"
+    source: str | None = None
+    owner_user_id: UUID | None = None
+    opportunity_title: str = Field(min_length=1, max_length=250)
+    opportunity_description: str | None = None
+    opportunity_value: float | None = Field(default=None, ge=0)
+    product_interest: str | None = None
+    expected_annual_volume: float | None = Field(default=None, ge=0)
+    expected_closing_date: str | None = None
+    probability: float | None = Field(default=None, ge=0, le=100)
+    lead_priority: str | None = None
+    market_segment_id: UUID | None = None
+    territory: str | None = None
+    competitor: str | None = None
+    next_action: str | None = None
+    expected_customer_decision_date: str | None = None
+    customer_id: UUID | None = None
 
-@router.post(
-    "",
-    response_model=dict,
-    status_code=201,
-)
+
+class StatusChange(BaseModel):
+    new_status: str = Field(min_length=1, max_length=50)
+    reason: str | None = None
+
+
+class QualificationCreate(BaseModel):
+    qualification_checklist: dict[str, Any] = Field(default_factory=dict)
+    business_potential: str | None = None
+    customer_legitimacy: str | None = None
+    product_fit: str | None = None
+    regulatory_fit: str | None = None
+    commercial_potential: str | None = None
+    strategic_importance: str | None = None
+    qualification_decision: str | None = None
+    decision_maker_user_id: UUID | None = None
+    qualification_comments: str | None = None
+    rejection_archive_reason: str | None = None
+    status: str = "PENDING"
+    qualification_date: str | None = None
+
+
+@router.get("/target-accounts")
+def target_accounts(
+    search: str | None = Query(default=None, max_length=150),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "VIEW")),
+):
+    data = rpc("search_target_accounts", {
+        "p_search": search,
+        "p_status": None,
+        "p_market_research_id": None,
+        "p_market_segment_id": None,
+        "p_limit": limit,
+        "p_offset": offset,
+    })
+    return {"items": data or [], "limit": limit, "offset": offset}
+
+
+@router.get("")
+def list_leads(
+    search: str | None = Query(default=None, max_length=150),
+    status: str | None = Query(default=None, max_length=50),
+    market_segment_id: UUID | None = None,
+    owner_user_id: UUID | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "VIEW")),
+):
+    data = rpc("search_leads", {
+        "p_search": search,
+        "p_status": status,
+        "p_market_segment_id": str(market_segment_id) if market_segment_id else None,
+        "p_owner_user_id": str(owner_user_id) if owner_user_id else None,
+        "p_limit": limit,
+        "p_offset": offset,
+    })
+    return {"items": data or [], "limit": limit, "offset": offset}
+
+
+@router.get("/{lead_id}")
+def get_lead(
+    lead_id: UUID,
+    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "VIEW")),
+):
+    data = rpc("get_lead", {"p_lead_id": str(lead_id)})
+    if not data:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    return data
+
+
+@router.post("", status_code=201)
 def create_lead(
-    payload: CreateLeadRequest,
-    db: Session = Depends(get_db),
+    payload: LeadCreate,
     identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "CREATE")),
 ):
-    """
-    Create a new customer enquiry.
-    """
-
-    # --------------------------------------------------------
-    # VALIDATE STAGE
-    # --------------------------------------------------------
-
-    if payload.stage not in VALID_STAGES:
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Invalid stage. Allowed: "
-                + ", ".join(sorted(VALID_STAGES))
-            ),
-        )
-
-    # --------------------------------------------------------
-    # VALIDATE MARKET
-    # --------------------------------------------------------
-
-    if payload.market not in VALID_MARKETS:
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Invalid market. Allowed: "
-                + ", ".join(sorted(VALID_MARKETS))
-            ),
-        )
-
-    # --------------------------------------------------------
-    # CHECK DUPLICATE ENQUIRY ID
-    # --------------------------------------------------------
-
-    existing = (
-        db.query(Lead)
-        .filter(
-            Lead.enquiry_id == payload.enquiry_id
-        )
-        .first()
+    values = payload.model_dump()
+    values["owner_user_id"] = (
+        str(values["owner_user_id"]) if values["owner_user_id"] else None
     )
-
-    if existing:
-
-        raise HTTPException(
-            status_code=409,
-            detail="Enquiry ID already exists",
-        )
-
-    # --------------------------------------------------------
-    # CREATE LEAD
-    # --------------------------------------------------------
-
-    lead = Lead(
-        enquiry_id=payload.enquiry_id,
-        customer=payload.customer,
-        product=payload.product,
-        cas_no=payload.cas_no,
-        market=payload.market,
-        regulatory_path=payload.regulatory_path,
-        tech_pack=payload.tech_pack,
-        quantity_kg=payload.quantity_kg,
-        value_usd=payload.value_usd,
-        stage=payload.stage,
-        owner=payload.owner,
-        next_step=payload.next_step,
-        development=payload.development,
+    values["market_segment_id"] = (
+        str(values["market_segment_id"]) if values["market_segment_id"] else None
     )
-
-    db.add(lead)
-
-    # Generate database ID
-    db.flush()
-
-    # --------------------------------------------------------
-    # AUDIT LOG
-    # --------------------------------------------------------
-
-    write_business_audit(
-        db,
-        actor_user_id=identity["user_id"],
-        action_code="INSERT",
-        record_schema="public",
-        record_table="leads",
-        record_key={"id": lead.id},
-        after_state=lead_response(lead),
-        changed_fields=[
-            "enquiry_id", "customer", "product", "cas_no", "market",
-            "regulatory_path", "tech_pack", "quantity_kg", "value_usd",
-            "stage", "owner", "next_step", "development",
-        ],
+    values["customer_id"] = (
+        str(values["customer_id"]) if values["customer_id"] else None
     )
-
-    # --------------------------------------------------------
-    # COMMIT
-    # --------------------------------------------------------
-
-    db.commit()
-
-    db.refresh(lead)
-
-    return lead_response(lead)
+    params = {"p_" + key: value for key, value in values.items()}
+    params["p_request_id"] = str(uuid4())
+    return rpc("create_lead", params)
 
 
-# ============================================================
-# UPDATE LEAD
-# ============================================================
-
-@router.put(
-    "/{lead_id}",
-    response_model=dict,
-)
-def update_lead(
-    lead_id: int,
-    payload: UpdateLeadRequest,
-    db: Session = Depends(get_db),
-    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "UPDATE")),
+@router.post("/{lead_id}/qualification", status_code=201)
+def create_qualification(
+    lead_id: UUID,
+    payload: QualificationCreate,
+    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "SUBMIT")),
 ):
-    """
-    Update an existing Lead.
-    """
-
-    # --------------------------------------------------------
-    # FIND LEAD
-    # --------------------------------------------------------
-
-    lead = (
-        db.query(Lead)
-        .filter(
-            Lead.id == lead_id
-        )
-        .first()
+    values = payload.model_dump()
+    values["decision_maker_user_id"] = (
+        str(values["decision_maker_user_id"])
+        if values["decision_maker_user_id"] else None
     )
-
-    if not lead:
-
-        raise HTTPException(
-            status_code=404,
-            detail="Lead not found",
-        )
-
-    # --------------------------------------------------------
-    # GET ONLY PROVIDED FIELDS
-    # --------------------------------------------------------
-
-    data = payload.model_dump(
-        exclude_unset=True
-    )
-
-    # --------------------------------------------------------
-    # VALIDATE STAGE
-    # --------------------------------------------------------
-
-    if (
-        "stage" in data
-        and data["stage"] not in VALID_STAGES
-    ):
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Invalid stage. Allowed: "
-                + ", ".join(sorted(VALID_STAGES))
-            ),
-        )
-
-    # --------------------------------------------------------
-    # VALIDATE MARKET
-    # --------------------------------------------------------
-
-    if (
-        "market" in data
-        and data["market"] not in VALID_MARKETS
-    ):
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Invalid market. Allowed: "
-                + ", ".join(sorted(VALID_MARKETS))
-            ),
-        )
-
-    # --------------------------------------------------------
-    # UPDATE FIELDS
-    # --------------------------------------------------------
-
-    for field, value in data.items():
-        setattr(
-            lead,
-            field,
-            value,
-        )
-
-    lead.updated_at = datetime.now(
-        timezone.utc
-    )
-
-    # --------------------------------------------------------
-    # AUDIT LOG
-    # --------------------------------------------------------
-
-    write_business_audit(
-        db,
-        actor_user_id=identity["user_id"],
-        action_code="UPDATE",
-        record_schema="public",
-        record_table="leads",
-        record_key={"id": lead.id},
-        after_state=lead_response(lead),
-        changed_fields=list(data.keys()),
-    )
-
-    # --------------------------------------------------------
-    # COMMIT
-    # --------------------------------------------------------
-
-    db.commit()
-
-    db.refresh(lead)
-
-    return lead_response(lead)
+    params = {"p_" + key: value for key, value in values.items()}
+    params["p_lead_id"] = str(lead_id)
+    params["p_request_id"] = str(uuid4())
+    return rpc("create_lead_qualification", params)
 
 
-# ============================================================
-# CHANGE LEAD STAGE
-# ============================================================
-
-@router.patch(
-    "/{lead_id}/stage",
-    response_model=dict,
-)
-def change_lead_stage(
-    lead_id: int,
-    stage: str = Query(
-        ...,
-        description="New commercial stage",
-    ),
-    db: Session = Depends(get_db),
-    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "UPDATE")),
+@router.patch("/{lead_id}/status")
+def transition_status(
+    lead_id: UUID,
+    payload: StatusChange,
+    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "SUBMIT")),
 ):
-    """
-    Change only the commercial stage of a Lead.
-    """
-
-    # --------------------------------------------------------
-    # VALIDATE STAGE
-    # --------------------------------------------------------
-
-    if stage not in VALID_STAGES:
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Invalid stage. Allowed: "
-                + ", ".join(sorted(VALID_STAGES))
-            ),
-        )
-
-    # --------------------------------------------------------
-    # FIND LEAD
-    # --------------------------------------------------------
-
-    lead = (
-        db.query(Lead)
-        .filter(
-            Lead.id == lead_id
-        )
-        .first()
-    )
-
-    if not lead:
-
-        raise HTTPException(
-            status_code=404,
-            detail="Lead not found",
-        )
-
-    # --------------------------------------------------------
-    # STORE OLD STAGE
-    # --------------------------------------------------------
-
-    old_stage = lead.stage
-
-    # --------------------------------------------------------
-    # UPDATE STAGE
-    # --------------------------------------------------------
-
-    lead.stage = stage
-
-    lead.updated_at = datetime.now(
-        timezone.utc
-    )
-
-    # --------------------------------------------------------
-    # AUDIT LOG
-    # --------------------------------------------------------
-
-    write_business_audit(
-        db,
-        actor_user_id=identity["user_id"],
-        action_code="UPDATE",
-        record_schema="public",
-        record_table="leads",
-        record_key={"id": lead.id},
-        before_state={"stage": old_stage},
-        after_state={"stage": lead.stage},
-        changed_fields=["stage"],
-    )
-
-    # --------------------------------------------------------
-    # COMMIT
-    # --------------------------------------------------------
-
-    db.commit()
-
-    db.refresh(lead)
-
-    return {
-        "message": "Lead stage updated",
-        "old_stage": old_stage,
-        "new_stage": lead.stage,
-        "lead": lead_response(lead),
-    }
-
-
-# ============================================================
-# DELETE LEAD
-# ============================================================
-
-@router.delete(
-    "/{lead_id}",
-)
-def delete_lead(
-    lead_id: int,
-    db: Session = Depends(get_db),
-    identity=Depends(require_axis_permission("COMMERCIAL_ENQUIRY", "DELETE")),
-):
-    """
-    Delete a Lead.
-    """
-
-    # --------------------------------------------------------
-    # FIND LEAD
-    # --------------------------------------------------------
-
-    lead = (
-        db.query(Lead)
-        .filter(
-            Lead.id == lead_id
-        )
-        .first()
-    )
-
-    if not lead:
-
-        raise HTTPException(
-            status_code=404,
-            detail="Lead not found",
-        )
-
-    # --------------------------------------------------------
-    # AUDIT LOG
-    #
-    # Store the ID before deleting the SQLAlchemy object.
-    # --------------------------------------------------------
-
-    lead_id_string = str(
-        lead.id
-    )
-
-    write_business_audit(
-        db,
-        actor_user_id=identity["user_id"],
-        action_code="DELETE",
-        record_schema="public",
-        record_table="leads",
-        record_key={"id": lead_id_string},
-        before_state=lead_response(lead),
-    )
-
-    # --------------------------------------------------------
-    # DELETE
-    # --------------------------------------------------------
-
-    db.delete(lead)
-
-    # --------------------------------------------------------
-    # COMMIT
-    # --------------------------------------------------------
-
-    db.commit()
-
-    return {
-        "message": "Lead deleted",
-        "lead_id": lead_id,
-    }
+    return rpc("transition_lead_status", {
+        "p_lead_id": str(lead_id),
+        "p_new_status": payload.new_status,
+        "p_reason": payload.reason,
+        "p_request_id": str(uuid4()),
+    })

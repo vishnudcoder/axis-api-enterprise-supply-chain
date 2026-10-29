@@ -1,1486 +1,489 @@
-import { useEffect, useMemo, useState } from "react";
-import { Plus, Search, Eye, Pencil, Trash2, ChevronLeft, ChevronRight, X } from "lucide-react";
+﻿import { useEffect, useState, type FormEvent } from "react";
 import { api } from "./api";
+import {
+  Search, Plus, RefreshCw, ChevronRight, X,
+  FileText, Building2, ClipboardCheck, CalendarClock,
+  History, ArrowRightLeft, AlertCircle, CheckCircle2
+} from "lucide-react";
 
-type Lead = {
-  id: number;
-  enquiry_id: string;
-  customer: string;
-  product: string;
-  cas_no: string | null;
-  market: string;
-  regulatory_path: string | null;
-  tech_pack: string;
-  quantity_kg: number;
-  value_usd: number;
-  stage: string;
-  owner: string | null;
-  next_step: string | null;
-  development: boolean;
-  created_at: string;
-  updated_at: string;
-};
+type Row = Record<string, any>;
+type Tab =
+  | "Lead Details"
+  | "Target Account & Research"
+  | "Qualification"
+  | "Activities & Follow-ups"
+  | "Status & History"
+  | "Conversion & Next Stage";
 
-const STAGES = [
-  "All",
-  "Lead",
-  "COA Shared",
-  "Sample Sent",
-  "Quote Sent",
-  "PO Received",
+const TABS: { label: Tab; icon: typeof FileText }[] = [
+  { label: "Lead Details", icon: FileText },
+  { label: "Target Account & Research", icon: Building2 },
+  { label: "Qualification", icon: ClipboardCheck },
+  { label: "Activities & Follow-ups", icon: CalendarClock },
+  { label: "Status & History", icon: History },
+  { label: "Conversion & Next Stage", icon: ArrowRightLeft },
 ];
 
-const MARKETS = ["All", "US", "EU", "Japan", "ROW"];
+const STATUSES = ["NEW", "CONTACTED", "QUALIFIED", "CONVERTED", "LOST", "DISQUALIFIED", "ARCHIVED"];
 
-function money(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value);
+function value(row: Row | null | undefined, ...keys: string[]) {
+  if (!row) return "—";
+  for (const key of keys) {
+    const v = row[key];
+    if (v !== null && v !== undefined && v !== "") return String(v);
+  }
+  return "—";
+}
+
+function dateValue(v: unknown) {
+  if (!v) return "—";
+  const d = new Date(String(v));
+  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString();
+}
+
+function Field({ label, value: fieldValue }: { label: string; value: unknown }) {
+  return (
+    <div className="lead-field">
+      <div className="lead-field-label">{label}</div>
+      <div className="lead-field-value">{fieldValue === null || fieldValue === undefined || fieldValue === "" ? "—" : String(fieldValue)}</div>
+    </div>
+  );
 }
 
 export default function LeadsPage() {
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
+  const [leads, setLeads] = useState<Row[]>([]);
+  const [accounts, setAccounts] = useState<Row[]>([]);
+  const [selected, setSelected] = useState<Row | null>(null);
+  const [activeTab, setActiveTab] = useState<Tab>("Lead Details");
   const [search, setSearch] = useState("");
-  const [stage, setStage] = useState("All");
-  const [market, setMarket] = useState("All");
-
-  const [page, setPage] = useState(1);
-  const pageSize = 20;
-
-  const [showAddLead, setShowAddLead] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState("");
-  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
-  const [editingLead, setEditingLead] = useState<Lead | null>(null);
-  const [editForm, setEditForm] = useState({
-    customer: "",
-    product: "",
-    cas_no: "",
-    market: "US",
-    regulatory_path: "",
-    tech_pack: "Pending",
-    quantity_kg: "",
-    value_usd: "",
-    stage: "Lead",
-    owner: "",
-    next_step: "",
-    development: false,
-  });
-  const [actionLoading, setActionLoading] = useState(false);
-  const [actionError, setActionError] = useState("");
-
-  const currentUser = useMemo(() => {
-    try {
-      return JSON.parse(localStorage.getItem("axis_user") || "null");
-    } catch {
-      return null;
-    }
-  }, []);
-
-  const leadPermissions = currentUser?.role?.permissions?.find(
-  (permission: any) =>
-    String(permission.page || "").toLowerCase() === "leads",
-);
-
-const isAdmin =
-  currentUser?.role?.name === "Plant Head / Admin";
-
-const canCreate =
-  isAdmin || Boolean(leadPermissions?.can_create);
-
-const canEdit =
-  isAdmin || Boolean(leadPermissions?.can_edit);
-
-const canDelete =
-  isAdmin || Boolean(leadPermissions?.can_delete);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [showQualification, setShowQualification] = useState(false);
+  const [showStatus, setShowStatus] = useState(false);
 
   const [form, setForm] = useState({
-    enquiry_id: "",
-    customer: "",
-    product: "",
-    cas_no: "",
-    market: "US",
-    regulatory_path: "",
-    tech_pack: "Pending",
-    quantity_kg: "",
-    value_usd: "",
-    stage: "Lead",
-    owner: "",
-    next_step: "",
-    development: false,
+    lead_number: "",
+    lead_status: "NEW",
+    source: "",
+    opportunity_title: "",
+    opportunity_description: "",
+    opportunity_value: "",
+    product_interest: "",
+    expected_annual_volume: "",
+    expected_closing_date: "",
+    probability: "0",
+    lead_priority: "MEDIUM",
+    territory: "",
+    competitor: "",
+    next_action: "",
+    expected_customer_decision_date: "",
   });
 
+  const [qualification, setQualification] = useState({
+    business_potential: "",
+    customer_legitimacy: "",
+    product_fit: "",
+    regulatory_fit: "",
+    commercial_potential: "",
+    strategic_importance: "",
+    qualification_decision: "",
+    qualification_comments: "",
+    rejection_archive_reason: "",
+    status: "PENDING",
+  });
+
+  const [statusForm, setStatusForm] = useState({ new_status: "CONTACTED", reason: "" });
+
   async function loadLeads() {
+    setLoading(true);
+    setError("");
     try {
-      setLoading(true);
-      setError("");
-
-      const params: Record<string, string | number> = {
-        page,
-        page_size: pageSize,
-      };
-
-      if (search.trim()) {
-        params.search = search.trim();
-      }
-
-      if (stage !== "All") {
-        params.stage = stage;
-      }
-
-      if (market !== "All") {
-        params.market = market;
-      }
-
-      const response = await api.get("/api/leads", { params });
-      setLeads(response.data);
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail;
-
-      if (Array.isArray(detail)) {
-        setError(
-          detail.map((item) => item?.msg || "Unable to load leads.").join(", "),
-        );
-      } else if (typeof detail === "string") {
-        setError(detail);
-      } else {
-        setError("Unable to load leads. Check that the backend is running.");
-      }
+      const response = await api.get("/api/leads", {
+        params: { search: search || undefined, status: statusFilter || undefined, limit: 100, offset: 0 },
+      });
+      const data = response.data;
+      setLeads(Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : []);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Could not load leads. Check your session and backend.");
     } finally {
       setLoading(false);
     }
   }
 
+  async function loadAccounts() {
+    try {
+      const response = await api.get("/api/leads/target-accounts", { params: { limit: 100 } });
+      const data = response.data;
+      setAccounts(Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : []);
+    } catch {
+      setAccounts([]);
+    }
+  }
+
+  async function openLead(row: Row) {
+    const id = row.lead_id || row.id;
+    if (!id) {
+      setSelected(row);
+      return;
+    }
+    setError("");
+    try {
+      const response = await api.get(`/api/leads/${encodeURIComponent(String(id))}`);
+      const data = response.data;
+      setSelected(data?.lead || data);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Could not load lead details.");
+      setSelected(row);
+    }
+  }
+
   useEffect(() => {
-    loadLeads();
-  }, [page, stage, market]);
+    void loadLeads();
+    void loadAccounts();
+  }, []);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setPage(1);
-      loadLeads();
-    }, 350);
-
-    return () => window.clearTimeout(timer);
-  }, [search]);
-
-  const summary = useMemo(() => {
-    const pipeline = leads.reduce(
-      (total, lead) => total + Number(lead.value_usd || 0),
-      0,
-    );
-
-    const regulated = leads.filter(
-      (lead) => lead.market !== "ROW",
-    ).length;
-
-    const pendingTechPack = leads.filter(
-      (lead) => lead.tech_pack.toLowerCase() === "pending",
-    ).length;
-
-    const development = leads.filter(
-      (lead) => lead.development,
-    ).length;
-
-    return {
-      count: leads.length,
-      pipeline,
-      regulated,
-      pendingTechPack,
-      development,
-    };
-  }, [leads]);
-
-  function stageClass(value: string) {
-    return `status-badge ${value
-      .toLowerCase()
-      .replace(/ /g, "-")}`;
-  }
-
-  function updateForm(
-    field: keyof typeof form,
-    value: string | boolean,
-  ) {
-    setForm((current) => ({
-      ...current,
-      [field]: value,
-    }));
-  }
-
-  function resetForm() {
-    setForm({
-      enquiry_id: "",
-      customer: "",
-      product: "",
-      cas_no: "",
-      market: "US",
-      regulatory_path: "",
-      tech_pack: "Pending",
-      quantity_kg: "",
-      value_usd: "",
-      stage: "Lead",
-      owner: "",
-      next_step: "",
-      development: false,
-    });
-    setFormError("");
-  }
-
-  function openAddLead() {
-    resetForm();
-    setShowAddLead(true);
-  }
-
-  function openViewLead(lead: Lead) {
-    setActionError("");
-    setSelectedLead(lead);
-  }
-
-  function openEditLead(lead: Lead) {
-    setActionError("");
-    setEditingLead(lead);
-    setEditForm({
-      customer: lead.customer,
-      product: lead.product,
-      cas_no: lead.cas_no || "",
-      market: lead.market,
-      regulatory_path: lead.regulatory_path || "",
-      tech_pack: lead.tech_pack,
-      quantity_kg: String(lead.quantity_kg ?? ""),
-      value_usd: String(lead.value_usd ?? ""),
-      stage: lead.stage,
-      owner: lead.owner || "",
-      next_step: lead.next_step || "",
-      development: lead.development,
-    });
-  }
-
-  function closeDetails() {
-    if (!actionLoading) {
-      setSelectedLead(null);
-      setActionError("");
-    }
-  }
-
-  function closeEditLead() {
-    if (!actionLoading) {
-      setEditingLead(null);
-      setActionError("");
-    }
-  }
-
-  function updateEditForm(
-    field: keyof typeof editForm,
-    value: string | boolean,
-  ) {
-    setEditForm((current) => ({
-      ...current,
-      [field]: value,
-    }));
-  }
-
-  async function saveEditedLead(event: React.FormEvent<HTMLFormElement>) {
+  async function submitCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    if (!editingLead) return;
-
-    setActionError("");
-    setActionLoading(true);
-
-    try {
-      const quantity = Number(editForm.quantity_kg);
-      const value = Number(editForm.value_usd);
-
-      if (!editForm.customer.trim()) {
-        throw new Error("Customer is required.");
-      }
-
-      if (!editForm.product.trim()) {
-        throw new Error("Product is required.");
-      }
-
-      if (!Number.isFinite(quantity) || quantity < 0) {
-        throw new Error("Quantity must be 0 or greater.");
-      }
-
-      if (!Number.isFinite(value) || value < 0) {
-        throw new Error("Value must be 0 or greater.");
-      }
-
-      const response = await api.put(`/api/leads/${editingLead.id}`, {
-        customer: editForm.customer.trim(),
-        product: editForm.product.trim(),
-        cas_no: editForm.cas_no.trim() || null,
-        market: editForm.market,
-        regulatory_path: editForm.regulatory_path.trim() || null,
-        tech_pack: editForm.tech_pack,
-        quantity_kg: quantity,
-        value_usd: value,
-        stage: editForm.stage,
-        owner: editForm.owner.trim() || null,
-        next_step: editForm.next_step.trim() || null,
-        development: editForm.development,
-      });
-
-      const updated = response.data as Lead;
-
-      setEditingLead(null);
-      setSelectedLead(updated);
-      await loadLeads();
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail;
-
-      if (Array.isArray(detail)) {
-        setActionError(
-          detail.map((item) => item?.msg || "Unable to update lead.").join(", "),
-        );
-      } else if (typeof detail === "string") {
-        setActionError(detail);
-      } else if (err instanceof Error) {
-        setActionError(err.message);
-      } else {
-        setActionError("Unable to update lead.");
-      }
-    } finally {
-      setActionLoading(false);
-    }
-  }
-
-  async function changeStage(lead: Lead, newStage: string) {
-    if (lead.stage === newStage) return;
-
-    setActionError("");
-    setActionLoading(true);
-
-    try {
-      const response = await api.patch(
-        `/api/leads/${lead.id}/stage`,
-        null,
-        { params: { stage: newStage } },
-      );
-
-      const updated = response.data.lead as Lead;
-
-      setLeads((current) =>
-        current.map((item) => (item.id === updated.id ? updated : item)),
-      );
-
-      setSelectedLead(updated);
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail;
-      setActionError(
-        Array.isArray(detail)
-          ? detail.map((item) => item?.msg || "Unable to change stage.").join(", ")
-          : typeof detail === "string"
-            ? detail
-            : "Unable to change lead stage.",
-      );
-    } finally {
-      setActionLoading(false);
-    }
-  }
-
-  async function deleteLead(lead: Lead) {
-    const confirmed = window.confirm(
-      `Delete ${lead.enquiry_id} for ${lead.customer}? This cannot be undone.`,
-    );
-
-    if (!confirmed) return;
-
-    setActionError("");
-    setActionLoading(true);
-
-    try {
-      await api.delete(`/api/leads/${lead.id}`);
-      setSelectedLead(null);
-      await loadLeads();
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail;
-      setActionError(
-        Array.isArray(detail)
-          ? detail.map((item) => item?.msg || "Unable to delete lead.").join(", ")
-          : typeof detail === "string"
-            ? detail
-            : "Unable to delete lead.",
-      );
-    } finally {
-      setActionLoading(false);
-    }
-  }
-
-  function closeAddLead() {
-    if (!saving) {
-      setShowAddLead(false);
-      setFormError("");
-    }
-  }
-
-  async function createLead(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError("");
     setSaving(true);
-
+    setError("");
+    setNotice("");
     try {
-      const payload = {
-        enquiry_id: form.enquiry_id.trim(),
-        customer: form.customer.trim(),
-        product: form.product.trim(),
-        cas_no: form.cas_no.trim() || null,
-        market: form.market,
-        regulatory_path: form.regulatory_path.trim() || null,
-        tech_pack: form.tech_pack,
-        quantity_kg: Number(form.quantity_kg),
-        value_usd: Number(form.value_usd),
-        stage: form.stage,
-        owner: form.owner.trim() || null,
-        next_step: form.next_step.trim() || null,
-        development: form.development,
+      const body: Row = {
+        lead_number: form.lead_number.trim(),
+        lead_status: "NEW",
+        source: form.source || null,
+        opportunity_title: form.opportunity_title.trim(),
+        opportunity_description: form.opportunity_description || null,
+        opportunity_value: form.opportunity_value === "" ? null : Number(form.opportunity_value),
+        product_interest: form.product_interest || null,
+        expected_annual_volume: form.expected_annual_volume === "" ? null : Number(form.expected_annual_volume),
+        expected_closing_date: form.expected_closing_date || null,
+        probability: form.probability === "" ? null : Number(form.probability),
+        lead_priority: form.lead_priority || null,
+        territory: form.territory || null,
+        competitor: form.competitor || null,
+        next_action: form.next_action || null,
+        expected_customer_decision_date: form.expected_customer_decision_date || null,
       };
-
-      if (!payload.enquiry_id) {
-        throw new Error("Enquiry ID is required.");
-      }
-
-      if (!payload.customer) {
-        throw new Error("Customer is required.");
-      }
-
-      if (!payload.product) {
-        throw new Error("Product is required.");
-      }
-
-      if (!Number.isFinite(payload.quantity_kg) || payload.quantity_kg <= 0) {
-        throw new Error("Quantity must be greater than 0.");
-      }
-
-      if (!Number.isFinite(payload.value_usd) || payload.value_usd < 0) {
-        throw new Error("Value must be 0 or greater.");
-      }
-
-      await api.post("/api/leads", payload);
-
-      setShowAddLead(false);
-      resetForm();
-      setPage(1);
+      const response = await api.post("/api/leads", body);
+      setShowCreate(false);
+      setForm({
+        lead_number: "", lead_status: "NEW", source: "", opportunity_title: "",
+        opportunity_description: "", opportunity_value: "", product_interest: "",
+        expected_annual_volume: "", expected_closing_date: "", probability: "0",
+        lead_priority: "MEDIUM", territory: "", competitor: "", next_action: "",
+        expected_customer_decision_date: "",
+      });
+      setNotice("Lead created successfully.");
       await loadLeads();
-    } catch (err: any) {
-      const detail = err?.response?.data?.detail;
-
-      if (Array.isArray(detail)) {
-        setFormError(
-          detail.map((item) => item?.msg || "Unable to create lead.").join(", "),
-        );
-      } else if (typeof detail === "string") {
-        setFormError(detail);
-      } else if (err instanceof Error) {
-        setFormError(err.message);
-      } else {
-        setFormError("Unable to create lead. Check that the backend is running.");
-      }
+      const created = response.data?.lead || response.data;
+      if (created?.lead_id) await openLead(created);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Lead creation failed.");
     } finally {
       setSaving(false);
     }
   }
 
-  return (
-    <div className="leads-page">
-      <div className="page-header leads-page-header">
-        <div>
-          <h1>Leads &amp; Enquiries</h1>
-          <p>Customer enquiries and commercial pipeline.</p>
-        </div>
+  async function submitQualification(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const id = selected.lead_id || selected.id;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await api.post(`/api/leads/${encodeURIComponent(String(id))}/qualification`, {
+        qualification_checklist: {
+          business_potential: qualification.business_potential,
+          customer_legitimacy: qualification.customer_legitimacy,
+          product_fit: qualification.product_fit,
+          regulatory_fit: qualification.regulatory_fit,
+          commercial_potential: qualification.commercial_potential,
+          strategic_importance: qualification.strategic_importance,
+        },
+        ...qualification,
+        qualification_date: new Date().toISOString().slice(0, 10),
+      });
+      setShowQualification(false);
+      setNotice("Qualification submitted.");
+      await openLead(selected);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Qualification submission failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
-        {canCreate && (
-          <button className="primary-button" onClick={openAddLead}>
-            <Plus size={17} />
-            Add Lead
-          </button>
-        )}
+  async function submitStatus(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected) return;
+    const id = selected.lead_id || selected.id;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      await api.patch(`/api/leads/${encodeURIComponent(String(id))}/status`, statusForm);
+      setShowStatus(false);
+      setNotice("Status transition submitted.");
+      await loadLeads();
+      await openLead(selected);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || "Status transition failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const selectedId = selected?.lead_id || selected?.id;
+  const selectedHistory = selected?.status_history || selected?.history || [];
+  const selectedQualification = selected?.latest_qualification || selected?.qualification || null;
+  const targetAccountId = selected?.target_account_id;
+  const relatedAccount = accounts.find((a) => String(a.target_account_id || a.id) === String(targetAccountId));
+
+  return (
+    <main className="leads-workspace">
+      <style>{`
+        .leads-workspace{padding:24px;max-width:1600px;margin:0 auto;color:var(--text-primary,#202938)}
+        .leads-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:22px}
+        .leads-title{font-size:27px;font-weight:750;margin:0 0 6px}
+        .leads-subtitle{color:var(--text-secondary,#687386);margin:0;font-size:14px}
+        .leads-actions{display:flex;gap:9px;flex-wrap:wrap}
+        .lead-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid #d5dbe5;border-radius:9px;padding:9px 13px;background:#fff;color:#253047;font-weight:600;cursor:pointer}
+        .lead-btn.primary{background:#176b52;color:#fff;border-color:#176b52}
+        .lead-btn:disabled{opacity:.55;cursor:not-allowed}
+        .lead-searchbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+        .lead-control{border:1px solid #d6dce5;border-radius:8px;padding:10px 11px;background:#fff;color:#243044;min-width:0}
+        .lead-search{display:flex;align-items:center;gap:8px;flex:1;min-width:220px;border:1px solid #d6dce5;border-radius:9px;padding:0 10px;background:#fff}
+        .lead-search input{border:0;outline:0;padding:10px 0;width:100%;background:transparent}
+        .lead-layout{display:grid;grid-template-columns:minmax(320px,0.9fr) minmax(450px,1.5fr);gap:18px;align-items:start}
+        .lead-panel{border:1px solid #e0e5ec;border-radius:13px;background:#fff;overflow:hidden}
+        .lead-panel-head{padding:15px 17px;border-bottom:1px solid #e8ebf0;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:10px}
+        .lead-list{max-height:72vh;overflow:auto}
+        .lead-row{padding:14px 16px;border-bottom:1px solid #edf0f4;cursor:pointer;display:flex;justify-content:space-between;gap:12px}
+        .lead-row:hover,.lead-row.active{background:#f0f8f4}
+        .lead-row-title{font-weight:700;margin-bottom:5px}
+        .lead-muted{font-size:12px;color:#737e8e}
+        .lead-pill{font-size:11px;padding:4px 7px;border-radius:99px;background:#e9f3ee;color:#176b52;font-weight:700;white-space:nowrap;height:max-content}
+        .lead-tabs{display:flex;gap:4px;padding:8px;border-bottom:1px solid #e7ebf0;overflow-x:auto;background:#fafbfc}
+        .lead-tab{white-space:nowrap;border:0;border-radius:7px;background:transparent;padding:9px 10px;cursor:pointer;color:#697386;font-weight:650;font-size:12px}
+        .lead-tab.active{background:#176b52;color:#fff}
+        .lead-content{padding:18px}
+        .lead-content h3{margin:0 0 14px;font-size:16px}
+        .lead-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+        .lead-field{min-width:0;border-bottom:1px solid #edf0f4;padding-bottom:11px}
+        .lead-field-label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#778294;margin-bottom:6px}
+        .lead-field-value{font-size:14px;overflow-wrap:anywhere;font-weight:550}
+        .lead-empty{padding:28px;text-align:center;color:#778294}
+        .lead-alert{padding:11px 13px;border-radius:8px;margin-bottom:12px;font-size:13px;background:#fff2f0;color:#9b2c20}
+        .lead-success{padding:11px 13px;border-radius:8px;margin-bottom:12px;background:#eaf7ef;color:#176b52;font-size:13px}
+        .lead-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+        .lead-form label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:650;color:#586579}
+        .lead-form input,.lead-form select,.lead-form textarea{width:100%;box-sizing:border-box;border:1px solid #d6dce5;border-radius:8px;padding:10px;font:inherit;color:#263247;background:white}
+        .lead-form textarea{min-height:78px;resize:vertical}
+        .lead-form .wide{grid-column:1/-1}
+        .lead-form-footer{grid-column:1/-1;display:flex;gap:9px;justify-content:flex-end;padding-top:6px}
+        .lead-history-item{border-left:2px solid #c8ded2;margin-left:5px;padding:0 0 18px 15px}
+        .lead-modal-backdrop{position:fixed;inset:0;background:#16212c77;z-index:1000;display:grid;place-items:center;padding:20px}
+        .lead-modal{width:min(760px,100%);max-height:90vh;overflow:auto;background:white;border-radius:14px;box-shadow:0 20px 70px #0003}
+        .lead-modal-head{display:flex;justify-content:space-between;align-items:center;padding:18px;border-bottom:1px solid #e6eaf0}
+        .lead-modal-body{padding:18px}
+        @media(max-width:1000px){.lead-layout{grid-template-columns:1fr}.lead-list{max-height:360px}}
+        @media(max-width:620px){.leads-workspace{padding:13px}.lead-grid,.lead-form{grid-template-columns:1fr}.lead-form .wide{grid-column:auto}.lead-tabs{padding:6px}.lead-content{padding:13px}}
+      `}</style>
+
+      <div className="leads-top">
+        <div>
+          <h1 className="leads-title">Commercial Leads</h1>
+          <p className="leads-subtitle">Lead intake, account research, qualification and controlled progression.</p>
+        </div>
+        <div className="leads-actions">
+          <button className="lead-btn" onClick={() => { void loadLeads(); void loadAccounts(); }}><RefreshCw size={15} /> Refresh</button>
+          <button className="lead-btn primary" onClick={() => { setError(""); setShowCreate(true); }}><Plus size={16} /> New lead</button>
+        </div>
       </div>
 
-      <section className="kpi-grid leads-kpis">
-        <article className="kpi-card">
-          <div className="eyebrow">LIVE ENQUIRIES</div>
-          <strong>{summary.count}</strong>
-          <span>Active commercial enquiries</span>
-        </article>
+      {error && <div className="lead-alert"><AlertCircle size={15} style={{ verticalAlign: "middle", marginRight: 7 }} />{error}</div>}
+      {notice && <div className="lead-success"><CheckCircle2 size={15} style={{ verticalAlign: "middle", marginRight: 7 }} />{notice}</div>}
 
-        <article className="kpi-card">
-          <div className="eyebrow">PIPELINE VALUE</div>
-          <strong>{money(summary.pipeline)}</strong>
-          <span>Current enquiry value</span>
-        </article>
+      <div className="lead-searchbar">
+        <label className="lead-search"><Search size={16} /><input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void loadLeads(); }} placeholder="Search lead number, opportunity, customer..." /></label>
+        <select className="lead-control" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); }} aria-label="Filter by lead status">
+          <option value="">All statuses</option>{STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <button className="lead-btn" onClick={() => void loadLeads()}><Search size={15} /> Search</button>
+      </div>
 
-        <article className="kpi-card">
-          <div className="eyebrow">REGULATED MARKETS</div>
-          <strong>{summary.regulated}</strong>
-          <span>US, EU and Japan</span>
-        </article>
-
-        <article className="kpi-card">
-          <div className="eyebrow">TECH-PACK PENDING</div>
-          <strong>{summary.pendingTechPack}</strong>
-          <span>Requiring action</span>
-        </article>
-
-        <article className="kpi-card">
-          <div className="eyebrow">DEVELOPMENT</div>
-          <strong>{summary.development}</strong>
-          <span>Development enquiries</span>
-        </article>
-      </section>
-
-      <section className="leads-panel">
-        <div className="leads-toolbar">
-          <div className="search-box">
-            <Search size={18} />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search enquiry, customer, product or owner..."
-            />
+      <div className="lead-layout">
+        <section className="lead-panel">
+          <div className="lead-panel-head"><span>Lead register</span><span className="lead-muted">{loading ? "Loading…" : `${leads.length} records`}</span></div>
+          <div className="lead-list">
+            {leads.map((lead, index) => {
+              const id = lead.lead_id || lead.id;
+              return (
+                <button type="button" className={`lead-row ${String(selectedId) === String(id) ? "active" : ""}`} key={id || index} onClick={() => void openLead(lead)} style={{ width: "100%", textAlign: "left", border: 0, background: String(selectedId) === String(id) ? "#f0f8f4" : "white", font: "inherit" }}>
+                  <span>
+                    <span className="lead-row-title" style={{ display: "block" }}>{value(lead, "opportunity_title", "lead_number")}</span>
+                    <span className="lead-muted">{value(lead, "lead_number")} · {value(lead, "customer_name", "customer", "target_account_name")}</span>
+                  </span>
+                  <span className="lead-pill">{value(lead, "lead_status", "status")}</span>
+                  <ChevronRight size={15} style={{ flexShrink: 0, color: "#8a94a3" }} />
+                </button>
+              );
+            })}
+            {!loading && leads.length === 0 && <div className="lead-empty">No leads returned by the commercial workflow.</div>}
           </div>
-        </div>
+        </section>
 
-        <div className="filter-section">
-          <div className="filter-label">STAGE</div>
-
-          <div className="filter-buttons">
-            {STAGES.map((item) => (
-              <button
-                key={item}
-                className={stage === item ? "filter-button active" : "filter-button"}
-                onClick={() => {
-                  setStage(item);
-                  setPage(1);
-                }}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="filter-section">
-          <div className="filter-label">MARKET</div>
-
-          <div className="filter-buttons">
-            {MARKETS.map((item) => (
-              <button
-                key={item}
-                className={market === item ? "filter-button active" : "filter-button"}
-                onClick={() => {
-                  setMarket(item);
-                  setPage(1);
-                }}
-              >
-                {item}
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {error && (
-        <div className="form-error leads-error">
-          {error}
-        </div>
-      )}
-
-      <section className="dashboard-panel leads-table-panel">
-        <div className="panel-title-row">
-          <div>
-            <h2>Live enquiries</h2>
-            <p>
-              Leads and customer enquiries currently moving through the
-              commercial funnel.
-            </p>
-          </div>
-
-          <button
-            className="secondary-button"
-            onClick={loadLeads}
-            disabled={loading}
-          >
-            Refresh
-          </button>
-        </div>
-
-        {loading ? (
-          <div className="table-loading">
-            Loading leads...
-          </div>
-        ) : leads.length === 0 ? (
-          <div className="empty-state">
-            <h3>No enquiries found</h3>
-            <p>
-              Try changing the filters or search term.
-            </p>
-          </div>
-        ) : (
-          <div className="responsive-table leads-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>ENQUIRY</th>
-                  <th>CUSTOMER</th>
-                  <th>PRODUCT / CAS</th>
-                  <th>MARKET</th>
-                  <th>REGULATORY PATH</th>
-                  <th>TECH PACK</th>
-                  <th>QTY</th>
-                  <th>VALUE</th>
-                  <th>STAGE</th>
-                  <th>OWNER</th>
-                  <th>NEXT STEP</th>
-                  <th>ACTIONS</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {leads.map((lead) => (
-                  <tr key={lead.id}>
-                    <td>
-                      <strong>{lead.enquiry_id}</strong>
-                    </td>
-
-                    <td>
-                      <strong>{lead.customer}</strong>
-                    </td>
-
-                    <td>
-                      <div className="lead-product">
-                        <strong>{lead.product}</strong>
-                        <span>{lead.cas_no || "—"}</span>
-                      </div>
-                    </td>
-
-                    <td>
-                      <span className="market-badge">
-                        {lead.market}
-                      </span>
-                    </td>
-
-                    <td>
-                      {lead.regulatory_path || "—"}
-                    </td>
-
-                    <td>
-                      <span
-                        className={
-                          lead.tech_pack.toLowerCase() === "pending"
-                            ? "tech-pack pending"
-                            : "tech-pack complete"
-                        }
-                      >
-                        {lead.tech_pack}
-                      </span>
-                    </td>
-
-                    <td>
-                      {Number(lead.quantity_kg).toLocaleString()} kg
-                    </td>
-
-                    <td>
-                      <strong>{money(Number(lead.value_usd))}</strong>
-                    </td>
-
-                    <td>
-                      <span className={stageClass(lead.stage)}>
-                        {lead.stage}
-                      </span>
-                    </td>
-
-                    <td>
-                      {lead.owner || "—"}
-                    </td>
-
-                    <td>
-                      {lead.next_step || "—"}
-                    </td>
-
-                    <td>
-                      <div className="lead-actions">
-                        <button
-                          className="icon-button"
-                          title="View lead"
-                          onClick={() => openViewLead(lead)}
-                        >
-                          <Eye size={16} />
-                        </button>
-
-                        {canEdit && (
-                          <button
-                            className="icon-button"
-                            title="Edit lead"
-                            onClick={() => openEditLead(lead)}
-                          >
-                            <Pencil size={16} />
-                          </button>
-                        )}
-
-                        {canDelete && (
-                          <button
-                            className="icon-button danger"
-                            title="Delete lead"
-                            onClick={() => deleteLead(lead)}
-                            disabled={actionLoading}
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        <div className="pagination">
-          <span>
-            Page {page}
-          </span>
-
-          <div>
-            <button
-              className="icon-button"
-              disabled={page === 1}
-              onClick={() => setPage((value) => Math.max(1, value - 1))}
-            >
-              <ChevronLeft size={17} />
-            </button>
-
-            <button
-              className="icon-button"
-              disabled={leads.length < pageSize}
-              onClick={() => setPage((value) => value + 1)}
-            >
-              <ChevronRight size={17} />
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {selectedLead && (
-        <div
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              closeDetails();
-            }
-          }}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0, 0, 0, 0.45)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "24px",
-            zIndex: 1000,
-            overflowY: "auto",
-          }}
-        >
-          <div
-            style={{
-              width: "min(900px, 100%)",
-              maxHeight: "90vh",
-              overflowY: "auto",
-              background: "#ffffff",
-              borderRadius: "14px",
-              padding: "24px",
-              boxShadow: "0 24px 70px rgba(0,0,0,0.25)",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-                gap: "16px",
-                marginBottom: "20px",
-              }}
-            >
-              <div>
-                <div className="eyebrow">LEAD DETAILS</div>
-                <h2 style={{ margin: "4px 0 0" }}>
-                  {selectedLead.enquiry_id}
-                </h2>
-                <p style={{ margin: "6px 0 0", color: "#64748b" }}>
-                  {selectedLead.customer} · {selectedLead.product}
-                </p>
-              </div>
-
-              <button
-                type="button"
-                className="icon-button"
-                onClick={closeDetails}
-                disabled={actionLoading}
-                title="Close"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {actionError && (
-              <div
-                className="form-error"
-                style={{ marginBottom: "16px", padding: "10px 12px" }}
-              >
-                {actionError}
-              </div>
-            )}
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: "14px",
-              }}
-            >
-              {[
-                ["Customer", selectedLead.customer],
-                ["Product", selectedLead.product],
-                ["CAS No.", selectedLead.cas_no || "—"],
-                ["Market", selectedLead.market],
-                ["Regulatory Path", selectedLead.regulatory_path || "—"],
-                ["Tech Pack", selectedLead.tech_pack],
-                ["Quantity", `${Number(selectedLead.quantity_kg).toLocaleString()} kg`],
-                ["Value", money(Number(selectedLead.value_usd))],
-                ["Owner", selectedLead.owner || "—"],
-                ["Next Step", selectedLead.next_step || "—"],
-                ["Development", selectedLead.development ? "Yes" : "No"],
-                ["Created", new Date(selectedLead.created_at).toLocaleString()],
-              ].map(([label, value]) => (
-                <div
-                  key={label}
-                  style={{
-                    border: "1px solid #e2e8f0",
-                    borderRadius: "10px",
-                    padding: "14px",
-                  }}
-                >
-                  <div className="eyebrow">{label}</div>
-                  <div style={{ marginTop: "7px", fontWeight: 600 }}>
-                    {value}
-                  </div>
+        <section className="lead-panel">
+          {!selected ? (
+            <div className="lead-empty"><FileText size={27} style={{ margin: "0 auto 12px" }} /><div>Select a lead to view its workflow.</div></div>
+          ) : (
+            <>
+              <div className="lead-panel-head">
+                <div><div style={{ fontSize: 11, color: "#778294", marginBottom: 4 }}>{value(selected, "lead_number")}</div><div>{value(selected, "opportunity_title", "lead_number")}</div></div>
+                <div className="leads-actions">
+                  <button className="lead-btn" onClick={() => { setStatusForm({ new_status: value(selected, "lead_status") === "NEW" ? "CONTACTED" : "QUALIFIED", reason: "" }); setShowStatus(true); }}>Transition</button>
+                  <button className="lead-btn" onClick={() => setShowQualification(true)}>Qualification</button>
                 </div>
-              ))}
-            </div>
-
-            <div style={{ marginTop: "20px" }}>
-              <div className="eyebrow" style={{ marginBottom: "8px" }}>
-                STAGE
               </div>
+              <nav className="lead-tabs" aria-label="Lead workflow tabs">
+                {TABS.map(({ label, icon: Icon }) => <button key={label} className={`lead-tab ${activeTab === label ? "active" : ""}`} onClick={() => setActiveTab(label)}><Icon size={13} style={{ verticalAlign: "middle", marginRight: 5 }} />{label}</button>)}
+              </nav>
+              <div className="lead-content">
+                {activeTab === "Lead Details" && <>
+                  <h3>Lead details</h3><div className="lead-grid">
+                    <Field label="Lead number" value={value(selected, "lead_number")} />
+                    <Field label="Status" value={value(selected, "lead_status", "status")} />
+                    <Field label="Opportunity title" value={value(selected, "opportunity_title")} />
+                    <Field label="Source" value={value(selected, "source")} />
+                    <Field label="Description" value={value(selected, "opportunity_description")} />
+                    <Field label="Owner" value={value(selected, "owner_name", "owner_user_id")} />
+                    <Field label="Product interest" value={value(selected, "product_interest")} />
+                    <Field label="Priority" value={value(selected, "lead_priority")} />
+                    <Field label="Opportunity value" value={value(selected, "opportunity_value")} />
+                    <Field label="Probability (%)" value={value(selected, "probability")} />
+                    <Field label="Expected annual volume" value={value(selected, "expected_annual_volume")} />
+                    <Field label="Expected closing date" value={dateValue(selected.expected_closing_date)} />
+                    <Field label="Expected customer decision" value={dateValue(selected.expected_customer_decision_date)} />
+                    <Field label="Territory" value={value(selected, "territory")} />
+                    <Field label="Competitor" value={value(selected, "competitor")} />
+                    <Field label="Next action" value={value(selected, "next_action")} />
+                    <Field label="Created" value={dateValue(selected.created_at)} />
+                    <Field label="Last updated" value={dateValue(selected.updated_at)} />
+                  </div>
+                </>}
 
-              <select
-                value={selectedLead.stage}
-                disabled={actionLoading}
-                onChange={(event) =>
-                  changeStage(selectedLead, event.target.value)
-                }
-                style={{
-                  minWidth: "220px",
-                  padding: "10px 12px",
-                  borderRadius: "8px",
-                  border: "1px solid #cbd5e1",
-                }}
-              >
-                {STAGES.filter((item) => item !== "All").map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </div>
+                {activeTab === "Target Account & Research" && <>
+                  <h3>Target account & research</h3>
+                  <div className="lead-grid">
+                    <Field label="Target account ID" value={value(selected, "target_account_id")} />
+                    <Field label="Target account" value={value(selected, "target_account_name", "account_name") !== "—" ? value(selected, "target_account_name", "account_name") : value(relatedAccount, "target_account_name", "account_name", "name")} />
+                    <Field label="Customer" value={value(selected, "customer_name", "customer_id")} />
+                    <Field label="Market segment" value={value(selected, "market_segment_name", "market_segment_id")} />
+                    <Field label="Territory" value={value(selected, "territory")} />
+                    <Field label="Competitor" value={value(selected, "competitor")} />
+                  </div>
+                  <p className="lead-muted" style={{ marginTop: 18 }}>Account and research records are read from the commercial target-account workflow. The current API does not expose a lead-to-account linking action.</p>
+                  <h3 style={{ marginTop: 24 }}>Available target accounts</h3>
+                  {accounts.length === 0 ? <div className="lead-empty">No target accounts returned by the API.</div> : accounts.map((account, i) => <div key={account.target_account_id || account.id || i} className="lead-history-item"><strong>{value(account, "target_account_name", "account_name", "name")}</strong><div className="lead-muted">{value(account, "status")} · {value(account, "market_segment_name", "market_segment_id")}</div></div>)}
+                </>}
 
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                gap: "10px",
-                marginTop: "24px",
-                paddingTop: "18px",
-                borderTop: "1px solid #e2e8f0",
-              }}
-            >
-              {canEdit && (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    const lead = selectedLead;
-                    setSelectedLead(null);
-                    openEditLead(lead);
-                  }}
-                  disabled={actionLoading}
-                >
-                  <Pencil size={16} />
-                  Edit
-                </button>
-              )}
+                {activeTab === "Qualification" && <>
+                  <h3>Qualification</h3>
+                  {selectedQualification ? <div className="lead-grid">
+                    <Field label="Decision" value={value(selectedQualification, "qualification_decision", "decision")} />
+                    <Field label="Status" value={value(selectedQualification, "status")} />
+                    <Field label="Business potential" value={value(selectedQualification, "business_potential")} />
+                    <Field label="Customer legitimacy" value={value(selectedQualification, "customer_legitimacy")} />
+                    <Field label="Product fit" value={value(selectedQualification, "product_fit")} />
+                    <Field label="Regulatory fit" value={value(selectedQualification, "regulatory_fit")} />
+                    <Field label="Commercial potential" value={value(selectedQualification, "commercial_potential")} />
+                    <Field label="Strategic importance" value={value(selectedQualification, "strategic_importance")} />
+                    <Field label="Comments" value={value(selectedQualification, "qualification_comments", "comments")} />
+                    <Field label="Qualification date" value={dateValue(selectedQualification.qualification_date)} />
+                  </div> : <div className="lead-empty">No qualification record returned for this lead yet.</div>}
+                  <button className="lead-btn primary" onClick={() => setShowQualification(true)}><ClipboardCheck size={15} /> Submit qualification</button>
+                </>}
 
-              {canDelete && (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => deleteLead(selectedLead)}
-                  disabled={actionLoading}
-                >
-                  <Trash2 size={16} />
-                  Delete
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+                {activeTab === "Activities & Follow-ups" && <>
+                  <h3>Activities & follow-ups</h3>
+                  <div className="lead-empty"><CalendarClock size={25} style={{ margin: "0 auto 10px" }} /><div>Activity history is not exposed by the current backend routes.</div><p className="lead-muted">No activity records are fabricated. The activity API must be added before this tab can display or create commercial interactions.</p></div>
+                  <Field label="Next action on lead" value={value(selected, "next_action")} />
+                  <Field label="Expected customer decision" value={dateValue(selected.expected_customer_decision_date)} />
+                </>}
 
-      {editingLead && (
-        <div
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              closeEditLead();
-            }
-          }}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0, 0, 0, 0.45)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "24px",
-            zIndex: 1001,
-            overflowY: "auto",
-          }}
-        >
-          <form
-            onSubmit={saveEditedLead}
-            style={{
-              width: "min(900px, 100%)",
-              maxHeight: "90vh",
-              overflowY: "auto",
-              background: "#ffffff",
-              borderRadius: "14px",
-              padding: "24px",
-              boxShadow: "0 24px 70px rgba(0,0,0,0.25)",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-                gap: "16px",
-                marginBottom: "20px",
-              }}
-            >
-              <div>
-                <div className="eyebrow">EDIT LEAD</div>
-                <h2 style={{ margin: "4px 0 0" }}>
-                  {editingLead.enquiry_id}
-                </h2>
+                {activeTab === "Status & History" && <>
+                  <h3>Status & history</h3>
+                  <div className="lead-grid"><Field label="Current status" value={value(selected, "lead_status", "status")} /><Field label="Updated" value={dateValue(selected.updated_at)} /></div>
+                  <button className="lead-btn primary" style={{ margin: "16px 0" }} onClick={() => { setStatusForm({ new_status: value(selected, "lead_status") === "NEW" ? "CONTACTED" : "QUALIFIED", reason: "" }); setShowStatus(true); }}>Transition status</button>
+                  <h3 style={{ marginTop: 18 }}>Status history</h3>
+                  {Array.isArray(selectedHistory) && selectedHistory.length ? selectedHistory.map((item: Row, i: number) => <div className="lead-history-item" key={item.history_id || item.id || i}><strong>{value(item, "new_status", "lead_status", "status")}</strong><div className="lead-muted">{dateValue(item.changed_at || item.created_at)} · {value(item, "reason", "changed_by")}</div></div>) : <div className="lead-empty">No status-history rows were returned by the detail endpoint.</div>}
+                </>}
+
+                {activeTab === "Conversion & Next Stage" && <>
+                  <h3>Conversion & next stage</h3>
+                  <div className="lead-grid"><Field label="Current status" value={value(selected, "lead_status", "status")} /><Field label="Next action" value={value(selected, "next_action")} /><Field label="Expected closing date" value={dateValue(selected.expected_closing_date)} /><Field label="Expected decision date" value={dateValue(selected.expected_customer_decision_date)} /></div>
+                  <div className="lead-empty" style={{ marginTop: 16 }}>Conversion to a customer/opportunity is not exposed by the current backend API. Use the controlled status transition only when permitted by your commercial workflow.</div>
+                </>}
               </div>
+            </>
+          )}
+        </section>
+      </div>
 
-              <button
-                type="button"
-                className="icon-button"
-                onClick={closeEditLead}
-                disabled={actionLoading}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {actionError && (
-              <div
-                className="form-error"
-                style={{ marginBottom: "16px", padding: "10px 12px" }}
-              >
-                {actionError}
-              </div>
-            )}
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-                gap: "16px",
-              }}
-            >
-              <label>
-                <span>Customer *</span>
-                <input
-                  required
-                  value={editForm.customer}
-                  onChange={(event) =>
-                    updateEditForm("customer", event.target.value)
-                  }
-                />
-              </label>
-
-              <label>
-                <span>Product *</span>
-                <input
-                  required
-                  value={editForm.product}
-                  onChange={(event) =>
-                    updateEditForm("product", event.target.value)
-                  }
-                />
-              </label>
-
-              <label>
-                <span>CAS No.</span>
-                <input
-                  value={editForm.cas_no}
-                  onChange={(event) =>
-                    updateEditForm("cas_no", event.target.value)
-                  }
-                />
-              </label>
-
-              <label>
-                <span>Market</span>
-                <select
-                  value={editForm.market}
-                  onChange={(event) =>
-                    updateEditForm("market", event.target.value)
-                  }
-                >
-                  {MARKETS.filter((item) => item !== "All").map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                <span>Regulatory Path</span>
-                <input
-                  value={editForm.regulatory_path}
-                  onChange={(event) =>
-                    updateEditForm("regulatory_path", event.target.value)
-                  }
-                />
-              </label>
-
-              <label>
-                <span>Tech Pack</span>
-                <select
-                  value={editForm.tech_pack}
-                  onChange={(event) =>
-                    updateEditForm("tech_pack", event.target.value)
-                  }
-                >
-                  <option value="Pending">Pending</option>
-                  <option value="Complete">Complete</option>
-                </select>
-              </label>
-
-              <label>
-                <span>Quantity (kg)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={editForm.quantity_kg}
-                  onChange={(event) =>
-                    updateEditForm("quantity_kg", event.target.value)
-                  }
-                />
-              </label>
-
-              <label>
-                <span>Value (USD)</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={editForm.value_usd}
-                  onChange={(event) =>
-                    updateEditForm("value_usd", event.target.value)
-                  }
-                />
-              </label>
-
-              <label>
-                <span>Stage</span>
-                <select
-                  value={editForm.stage}
-                  onChange={(event) =>
-                    updateEditForm("stage", event.target.value)
-                  }
-                >
-                  {STAGES.filter((item) => item !== "All").map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                <span>Owner</span>
-                <input
-                  value={editForm.owner}
-                  onChange={(event) =>
-                    updateEditForm("owner", event.target.value)
-                  }
-                />
-              </label>
-
-              <label>
-                <span>Next Step</span>
-                <input
-                  value={editForm.next_step}
-                  onChange={(event) =>
-                    updateEditForm("next_step", event.target.value)
-                  }
-                />
-              </label>
-
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "10px",
-                  paddingTop: "25px",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={editForm.development}
-                  onChange={(event) =>
-                    updateEditForm("development", event.target.checked)
-                  }
-                />
-                <span>Development enquiry</span>
-              </label>
-            </div>
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                gap: "10px",
-                marginTop: "24px",
-                paddingTop: "18px",
-                borderTop: "1px solid #e2e8f0",
-              }}
-            >
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={closeEditLead}
-                disabled={actionLoading}
-              >
-                Cancel
-              </button>
-
-              <button
-                type="submit"
-                className="primary-button"
-                disabled={actionLoading}
-              >
-                {actionLoading ? "Saving..." : "Save Changes"}
-              </button>
-            </div>
+      {showCreate && <div className="lead-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowCreate(false); }}>
+        <section className="lead-modal" role="dialog" aria-modal="true" aria-labelledby="lead-create-title">
+          <div className="lead-modal-head"><strong id="lead-create-title">Create commercial lead</strong><button className="lead-btn" onClick={() => setShowCreate(false)} aria-label="Close"><X size={16} /></button></div>
+          <form className="lead-modal-body lead-form" onSubmit={submitCreate}>
+            <label>Lead number *<input required maxLength={100} value={form.lead_number} onChange={(e) => setForm({ ...form, lead_number: e.target.value })} /></label>
+            <label>Opportunity title *<input required maxLength={250} value={form.opportunity_title} onChange={(e) => setForm({ ...form, opportunity_title: e.target.value })} /></label>
+            <label>Source<input value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} /></label>
+            <label>Priority<select value={form.lead_priority} onChange={(e) => setForm({ ...form, lead_priority: e.target.value })}><option value="LOW">Low</option><option value="MEDIUM">Medium</option><option value="HIGH">High</option><option value="CRITICAL">Critical</option></select></label>
+            <label>Opportunity value<input type="number" min="0" step="any" value={form.opportunity_value} onChange={(e) => setForm({ ...form, opportunity_value: e.target.value })} /></label>
+            <label>Probability (%)<input type="number" min="0" max="100" value={form.probability} onChange={(e) => setForm({ ...form, probability: e.target.value })} /></label>
+            <label>Product interest<input value={form.product_interest} onChange={(e) => setForm({ ...form, product_interest: e.target.value })} /></label>
+            <label>Expected annual volume<input type="number" min="0" step="any" value={form.expected_annual_volume} onChange={(e) => setForm({ ...form, expected_annual_volume: e.target.value })} /></label>
+            <label>Expected closing date<input type="date" value={form.expected_closing_date} onChange={(e) => setForm({ ...form, expected_closing_date: e.target.value })} /></label>
+            <label>Expected customer decision<input type="date" value={form.expected_customer_decision_date} onChange={(e) => setForm({ ...form, expected_customer_decision_date: e.target.value })} /></label>
+            <label>Territory<input value={form.territory} onChange={(e) => setForm({ ...form, territory: e.target.value })} /></label>
+            <label>Competitor<input value={form.competitor} onChange={(e) => setForm({ ...form, competitor: e.target.value })} /></label>
+            <label className="wide">Opportunity description<textarea value={form.opportunity_description} onChange={(e) => setForm({ ...form, opportunity_description: e.target.value })} /></label>
+            <label className="wide">Next action<input value={form.next_action} onChange={(e) => setForm({ ...form, next_action: e.target.value })} /></label>
+            <div className="lead-form-footer"><button type="button" className="lead-btn" onClick={() => setShowCreate(false)}>Cancel</button><button type="submit" className="lead-btn primary" disabled={saving}>{saving ? "Creating…" : "Create lead"}</button></div>
           </form>
-        </div>
-      )}
+        </section>
+      </div>}
 
-      {showAddLead && (
-        <div
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              closeAddLead();
-            }
-          }}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0, 0, 0, 0.45)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "24px",
-            zIndex: 1000,
-            overflowY: "auto",
-          }}
-        >
-          <form
-            onSubmit={createLead}
-            style={{
-              width: "min(900px, 100%)",
-              maxHeight: "90vh",
-              overflowY: "auto",
-              background: "#ffffff",
-              borderRadius: "14px",
-              padding: "24px",
-              boxShadow: "0 24px 70px rgba(0,0,0,0.25)",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: "20px",
-              }}
-            >
-              <div>
-                <h2 style={{ margin: 0 }}>Add Lead</h2>
-                <p style={{ margin: "6px 0 0", color: "#64748b" }}>
-                  Create a new customer enquiry in the commercial pipeline.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                className="icon-button"
-                onClick={closeAddLead}
-                disabled={saving}
-                title="Close"
-              >
-                ×
-              </button>
-            </div>
-
-            {formError && (
-              <div
-                className="form-error"
-                style={{
-                  marginBottom: "16px",
-                  padding: "10px 12px",
-                }}
-              >
-                {formError}
-              </div>
-            )}
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
-                gap: "16px",
-              }}
-            >
-              <label>
-                <span>Enquiry ID *</span>
-                <input
-                  required
-                  value={form.enquiry_id}
-                  onChange={(event) =>
-                    updateForm("enquiry_id", event.target.value)
-                  }
-                  placeholder="ENQ-1001"
-                />
-              </label>
-
-              <label>
-                <span>Customer *</span>
-                <input
-                  required
-                  value={form.customer}
-                  onChange={(event) =>
-                    updateForm("customer", event.target.value)
-                  }
-                  placeholder="Customer name"
-                />
-              </label>
-
-              <label>
-                <span>Product *</span>
-                <input
-                  required
-                  value={form.product}
-                  onChange={(event) =>
-                    updateForm("product", event.target.value)
-                  }
-                  placeholder="Product name"
-                />
-              </label>
-
-              <label>
-                <span>CAS No.</span>
-                <input
-                  value={form.cas_no}
-                  onChange={(event) =>
-                    updateForm("cas_no", event.target.value)
-                  }
-                  placeholder="CAS number"
-                />
-              </label>
-
-              <label>
-                <span>Market *</span>
-                <select
-                  value={form.market}
-                  onChange={(event) =>
-                    updateForm("market", event.target.value)
-                  }
-                >
-                  <option value="US">US</option>
-                  <option value="EU">EU</option>
-                  <option value="Japan">Japan</option>
-                  <option value="ROW">ROW</option>
-                </select>
-              </label>
-
-              <label>
-                <span>Regulatory Path</span>
-                <input
-                  value={form.regulatory_path}
-                  onChange={(event) =>
-                    updateForm("regulatory_path", event.target.value)
-                  }
-                  placeholder="DMF / CEP / Customer filing"
-                />
-              </label>
-
-              <label>
-                <span>Tech Pack *</span>
-                <select
-                  value={form.tech_pack}
-                  onChange={(event) =>
-                    updateForm("tech_pack", event.target.value)
-                  }
-                >
-                  <option value="Pending">Pending</option>
-                  <option value="Complete">Complete</option>
-                </select>
-              </label>
-
-              <label>
-                <span>Quantity (kg) *</span>
-                <input
-                  required
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={form.quantity_kg}
-                  onChange={(event) =>
-                    updateForm("quantity_kg", event.target.value)
-                  }
-                  placeholder="100"
-                />
-              </label>
-
-              <label>
-                <span>Value (USD) *</span>
-                <input
-                  required
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.value_usd}
-                  onChange={(event) =>
-                    updateForm("value_usd", event.target.value)
-                  }
-                  placeholder="100000"
-                />
-              </label>
-
-              <label>
-                <span>Stage *</span>
-                <select
-                  value={form.stage}
-                  onChange={(event) =>
-                    updateForm("stage", event.target.value)
-                  }
-                >
-                  {STAGES.filter((item) => item !== "All").map((item) => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                <span>Owner</span>
-                <input
-                  value={form.owner}
-                  onChange={(event) =>
-                    updateForm("owner", event.target.value)
-                  }
-                  placeholder="Sales owner"
-                />
-              </label>
-
-              <label>
-                <span>Next Step</span>
-                <input
-                  value={form.next_step}
-                  onChange={(event) =>
-                    updateForm("next_step", event.target.value)
-                  }
-                  placeholder="Next commercial action"
-                />
-              </label>
-
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "10px",
-                  paddingTop: "25px",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={form.development}
-                  onChange={(event) =>
-                    updateForm("development", event.target.checked)
-                  }
-                />
-                <span>Development enquiry</span>
-              </label>
-            </div>
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                gap: "10px",
-                marginTop: "24px",
-                paddingTop: "18px",
-                borderTop: "1px solid #e2e8f0",
-              }}
-            >
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={closeAddLead}
-                disabled={saving}
-              >
-                Cancel
-              </button>
-
-              <button
-                type="submit"
-                className="primary-button"
-                disabled={saving}
-              >
-                {saving ? "Saving..." : "Create Lead"}
-              </button>
-            </div>
+      {showQualification && selected && <div className="lead-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowQualification(false); }}>
+        <section className="lead-modal" role="dialog" aria-modal="true" aria-labelledby="qualification-title">
+          <div className="lead-modal-head"><strong id="qualification-title">Lead qualification</strong><button className="lead-btn" onClick={() => setShowQualification(false)} aria-label="Close"><X size={16} /></button></div>
+          <form className="lead-modal-body lead-form" onSubmit={submitQualification}>
+            {(["business_potential", "customer_legitimacy", "product_fit", "regulatory_fit", "commercial_potential", "strategic_importance"] as const).map((key) => <label key={key}>{key.replace(/_/g, " ")}<select value={qualification[key]} onChange={(e) => setQualification({ ...qualification, [key]: e.target.value })}><option value="">Not assessed</option><option value="LOW">Low</option><option value="MEDIUM">Medium</option><option value="HIGH">High</option><option value="PASS">Pass</option><option value="FAIL">Fail</option></select></label>)}
+            <label>Decision<select value={qualification.qualification_decision} onChange={(e) => setQualification({ ...qualification, qualification_decision: e.target.value })}><option value="">Pending decision</option><option value="QUALIFY">Qualify</option><option value="REJECT">Reject</option><option value="ARCHIVE">Archive</option></select></label>
+            <label>Status<select value={qualification.status} onChange={(e) => setQualification({ ...qualification, status: e.target.value })}><option value="PENDING">Pending</option><option value="COMPLETED">Completed</option><option value="REJECTED">Rejected</option></select></label>
+            <label className="wide">Comments<textarea value={qualification.qualification_comments} onChange={(e) => setQualification({ ...qualification, qualification_comments: e.target.value })} /></label>
+            <label className="wide">Rejection/archive reason<textarea value={qualification.rejection_archive_reason} onChange={(e) => setQualification({ ...qualification, rejection_archive_reason: e.target.value })} /></label>
+            <div className="lead-form-footer"><button type="button" className="lead-btn" onClick={() => setShowQualification(false)}>Cancel</button><button type="submit" className="lead-btn primary" disabled={saving}>{saving ? "Submitting…" : "Submit qualification"}</button></div>
           </form>
-        </div>
-      )}
-    </div>
+        </section>
+      </div>}
+
+      {showStatus && selected && <div className="lead-modal-backdrop" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowStatus(false); }}>
+        <section className="lead-modal" role="dialog" aria-modal="true" aria-labelledby="status-title">
+          <div className="lead-modal-head"><strong id="status-title">Controlled status transition</strong><button className="lead-btn" onClick={() => setShowStatus(false)} aria-label="Close"><X size={16} /></button></div>
+          <form className="lead-modal-body lead-form" onSubmit={submitStatus}>
+            <label>New status<select required value={statusForm.new_status} onChange={(e) => setStatusForm({ ...statusForm, new_status: e.target.value })}>{STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}</select></label>
+            <label className="wide">Reason<textarea value={statusForm.reason} onChange={(e) => setStatusForm({ ...statusForm, reason: e.target.value })} /></label>
+            <div className="lead-form-footer"><button type="button" className="lead-btn" onClick={() => setShowStatus(false)}>Cancel</button><button type="submit" className="lead-btn primary" disabled={saving}>{saving ? "Submitting…" : "Submit transition"}</button></div>
+          </form>
+        </section>
+      </div>}
+    </main>
   );
 }
 
