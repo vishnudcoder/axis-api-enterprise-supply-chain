@@ -66,3 +66,9 @@ backup_*/
 
 # Local database inventories and diagnostic exports
 supabase_readonly_inventory.json
+
+# Local Supabase recovery backups and diagnostic scripts
+*.pre_*
+check_tables.py
+inspect_customer_actor_columns.sql
+inspect_document_security.sql
